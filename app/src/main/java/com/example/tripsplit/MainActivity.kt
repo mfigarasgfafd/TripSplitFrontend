@@ -1,6 +1,9 @@
 package com.example.tripsplit
 
+import android.R.attr.data
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -17,18 +20,32 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavController
+import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
+
 
 
 class MainActivity : ComponentActivity() {
@@ -44,19 +61,33 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel = viewModel()) {
+    var showJoinDialog by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        // Header Section
-        Text(
-            text = "Join with a code",
-            modifier = Modifier.padding(16.dp),
-            style = MaterialTheme.typography.h6
-        )
+        Button(
+            onClick = { showJoinDialog = true },
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Text(text = "Join with a code")
+        }
 
+        if (showJoinDialog) {
+            JoinCodeDialog(
+                onDismiss = { showJoinDialog = false },
+                onCodeEntered = { code ->
+                    showJoinDialog = false
+                     Log.d("TUTAJ","Entered code: $code")
+
+                }
+            )
+        }
         // Filters Section
         Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Button(onClick = { /* Filter0 action */ }) { Text("Filter0") }
@@ -73,7 +104,9 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
 
         // List of Trips
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(8.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp)
         ) {
             items(listOf("Joined Trip 1", "Joined Trip 2", "Joined Trip 3")) { trip ->
                 TripItem(tripName = trip, onTripClick = {
@@ -84,6 +117,45 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
         }
     }
 }
+
+
+@Composable
+fun JoinCodeDialog(
+    onDismiss: () -> Unit,
+    onCodeEntered: (String) -> Unit
+) {
+    var code by remember { mutableStateOf(TextFieldValue("")) }
+
+    AlertDialog(
+        onDismissRequest = { onDismiss() },
+        title = { Text(text = "Enter Code") },
+        text = {
+            OutlinedTextField(
+                value = code,
+                onValueChange = { code = it },
+                label = { Text("Code") },
+                singleLine = true
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onCodeEntered(code.text) // Pass the entered code to the callback
+                }
+            ) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = { onDismiss() }
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
 
 @Composable
 fun TripItem(tripName: String, onTripClick: (String) -> Unit) {
@@ -113,11 +185,10 @@ fun TripsApp() {
         NavHost(navController = navController, startDestination = "my_trips", Modifier.padding(innerPadding)) {
             composable("my_trips") { MyTripsScreen(navController, tripsViewModel) }  // Pass ViewModel
             composable("this_trip") { ThisTripScreen(tripsViewModel) }  // Pass ViewModel to "This Trip"
-            composable("my_profile") { MyProfileScreen() }
+            composable("my_profile") { ProfileScreen() }
         }
     }
 }
-
 
 
 @Composable
@@ -170,7 +241,9 @@ fun ThisTripScreen(tripsViewModel: TripsViewModel) {
     val selectedTrip by tripsViewModel.selectedTrip.observeAsState("Most Recent Trip")
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
     ) {
         // Example layout based on your screenshot
         Text(text = selectedTrip, style = MaterialTheme.typography.h4)
@@ -203,18 +276,6 @@ fun PersonItem(name: String) {
     }
 }
 
-@Composable
-fun MyProfileScreen() {
-    // Empty Profile screen
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("My Profile")
-    }
-}
-
 
 
 
@@ -231,7 +292,9 @@ fun TripsScreen() {
 
 @Composable
 fun FiltersSection() {
-    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+    Column(modifier = Modifier
+        .fillMaxWidth()
+        .padding(16.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -255,7 +318,7 @@ fun FiltersSection() {
 @Composable
 fun FilterButton(text: String, isSelected: Boolean = false) {
     Button(
-        onClick = { /* Handle Filter click */ },
+        onClick = { /* Filter click */ },
         shape = RoundedCornerShape(20.dp),
         colors = ButtonDefaults.buttonColors(
             backgroundColor = if (isSelected) Color(0xFFD0BCFF) else Color.LightGray
@@ -282,18 +345,18 @@ fun TripItem(tripName: String, lastUpdated: String) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(8.dp)
-            .clickable { /* Handle item click */ },
+            .clickable { /* item click */ },
         elevation = 4.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // grey box placeholder for image
+            // img placeholder
             Box(
                 modifier = Modifier
                     .size(120.dp, 60.dp)
                     .background(Color.Gray),
                 contentAlignment = Alignment.Center
             ) {
-                // design space for later
+                // for later..
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -309,4 +372,54 @@ fun TripItem(tripName: String, lastUpdated: String) {
 @Composable
 fun TripsScreenPreview() {
     TripsScreen()
+}
+
+
+@Composable
+fun ProfileScreen() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Top
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.ic_placeholder), // Replace with actual profile image resource
+            contentDescription = "Profile Picture",
+            modifier = Modifier
+                .size(100.dp)
+                .clip(CircleShape)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(text = "Ed Wood", fontSize = 24.sp, color = Color.Black)
+
+        Text(text = "email@example.com", fontSize = 16.sp, color = Color.Gray)
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        ProfileOption("Account Settings")
+        ProfileOption("Notification Preferences")
+        ProfileOption("Privacy & Security")
+    }
+}
+
+@Composable
+fun ProfileOption(optionText: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Text(text = optionText, fontSize = 18.sp, color = Color.Black)
+        Divider(color = Color.LightGray, thickness = 1.dp)
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ProfileScreenPreview() {
+    ProfileScreen()
 }
