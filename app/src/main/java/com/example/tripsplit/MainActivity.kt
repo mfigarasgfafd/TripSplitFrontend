@@ -1126,11 +1126,14 @@ fun CalendarScreen(tripList: List<Trip>) {
                 val dayEvents = tripEvents.filter {
                     !day.isBefore(it.startDate) && !day.isAfter(it.endDate)
                 }
+                val isSelected = day == selectedDay
+                val isToday = day == LocalDate.now()
 
                 DayCell(
                     day = day,
                     isCurrentMonth = day.month == currentDate.value.month,
-                    isToday = day == LocalDate.now(),
+                    isToday = isToday,
+                    isSelected = isSelected,  // Pass selection state
                     trips = dayEvents,
                     onClick = { selectedDay = day },
                     modifier = Modifier
@@ -1139,6 +1142,7 @@ fun CalendarScreen(tripList: List<Trip>) {
                 )
             }
         }
+
         selectedDay?.let { day ->
             val daysTrips = tripList.filter { trip ->
                 val (start, end) = parseDateRange(trip.dateRange)
@@ -1193,6 +1197,7 @@ fun DayCell(
     day: LocalDate,
     isCurrentMonth: Boolean,
     isToday: Boolean,
+    isSelected: Boolean,  // New parameter
     trips: List<TripEvent>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -1202,6 +1207,7 @@ fun DayCell(
             .clickable(onClick = onClick)
             .background(
                 color = when {
+                    isSelected -> MaterialTheme.colors.primary.copy(alpha = 0.3f)
                     isToday -> MaterialTheme.colors.primary.copy(alpha = 0.2f)
                     !isCurrentMonth -> Color.LightGray.copy(alpha = 0.3f)
                     else -> Color.Transparent
@@ -1209,8 +1215,10 @@ fun DayCell(
                 shape = RoundedCornerShape(8.dp)
             )
             .border(
-                width = 1.dp,
-                color = if (isCurrentMonth) Color.LightGray else Color.Transparent,
+                width = 2.dp,
+                color = if (isSelected) MaterialTheme.colors.primary
+                else if (isCurrentMonth) Color.LightGray
+                else Color.Transparent,
                 shape = RoundedCornerShape(8.dp)
             )
     ) {
@@ -1243,6 +1251,8 @@ fun DayCell(
                     )
                 }
             }
+
         }
     }
 }
+
