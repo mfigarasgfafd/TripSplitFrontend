@@ -1,11 +1,13 @@
 package com.example.tripsplit
 
 import android.R.attr.data
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -39,12 +41,181 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.navigation.compose.currentBackStackEntryAsState
+import com.google.gson.annotations.SerializedName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import java.security.cert.X509Certificate
+import java.time.LocalDate
+import java.time.Year
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.util.Calendar
+import java.util.Locale
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+import kotlin.random.Random
 
+val PrimaryColor = Color(0xFF6750A4)
+val SecondaryColor = Color(0xFFEADDFF)
+val BackgroundColor = Color(0xFFFEF7FF)
+
+data class NavItem(
+    val title: String,
+    val icon: Int,
+    val route: String
+)
+data class UserRegistration(
+    @SerializedName("name") val name: String,
+    @SerializedName("email") val email: String,
+    @SerializedName("password") val password: String
+)
+
+data class ApiResponse(
+    @SerializedName("success") val success: Boolean,
+    @SerializedName("message") val message: String
+)
+
+object RetrofitClient {
+    private const val BASE_URL = "https://trip-split.visoft.dev/"
+
+    val instance: ApiService by lazy {
+        val interceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+        }
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(interceptor)
+            .build()
+
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(ApiService::class.java)
+    }
+
+    private fun getUnsafeOkHttpClient(): OkHttpClient {
+
+        try {
+            // Create a trust manager that does not validate certificate chains
+            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            })
+
+            // Install the all-trusting trust manager
+            val sslContext = SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+
+            // Create an ssl socket factory with our all-trusting manager
+            val sslSocketFactory = sslContext.socketFactory
+
+            return OkHttpClient.Builder()
+                .sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+                .hostnameVerifier { _, _ -> true }
+                .addInterceptor(HttpLoggingInterceptor().apply {
+                    level = HttpLoggingInterceptor.Level.BODY
+                })
+                .build()
+        } catch (e: Exception) {
+            throw RuntimeException(e)
+        }
+    }
+
+    val unsafeInstance: ApiService by lazy {
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(getUnsafeOkHttpClient())
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(ApiService::class.java)
+    }
+
+}
+
+data class Trip(
+    val id: String,
+    val name: String,
+    val dateRange: String,
+    val nextActivity: String,
+    val progress: Float
+)
+
+data class TripEvent(
+    val id: Int,
+    val title: String,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val color: Color
+)
+
+val tripList = listOf(
+    Trip("1", "Summer Europe Trip", "Jul 15 - Aug 2", "Flight booking", 0.4f),
+    Trip("2", "Asia Backpacking", "Dec 1 - Jan 15", "Visa applications", 0.2f),
+    Trip("3", "Weekend Ski Trip", "Feb 10 - Feb 12", "Equipment rental", 0.8f)
+)
+
+
+fun String.toLocalDate(): LocalDate {
+    val formatterWithYear = DateTimeFormatter.ofPattern("MMM d yyyy", Locale.ENGLISH)
+    val formatterWithoutYear = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
+
+    return if (this.trim().length > 6) {  // Checks if the string already includes a year
+        LocalDate.parse(this, formatterWithYear)
+    } else {
+        LocalDate.parse("$this ${Year.now().value}", formatterWithYear)
+    }
+}
+
+
+fun parseDateRange(dateRange: String): Pair<LocalDate, LocalDate> {
+    val parts = dateRange.split(" - ")
+    val startDate = parts[0].toLocalDate()
+    var endDate = parts[1].toLocalDate()
+
+    // Handle year-wrap (e.g., Dec 31 - Jan 2)
+    if (endDate.isBefore(startDate)) {
+        endDate = endDate.plusYears(1)
+    }
+    return startDate to endDate
+}
+
+fun generatePersistentColor(tripId: String): Color {
+    val random = Random(tripId.hashCode().toLong())
+    return Color(
+        red = random.nextFloat().coerceIn(0.3f, 0.7f),
+        green = random.nextFloat().coerceIn(0.3f, 0.7f),
+        blue = random.nextFloat().coerceIn(0.3f, 0.7f)
+    )
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,15 +231,39 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel = viewModel()) {
     var showJoinDialog by remember { mutableStateOf(false) }
+    val filterOptions = listOf("All", "Active", "Upcoming", "Completed")
+    var selectedFilter by remember { mutableStateOf(0) }
 
     Column(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BackgroundColor)
     ) {
-        Button(
-            onClick = { showJoinDialog = true },
-            modifier = Modifier.padding(16.dp)
+        // Header Section
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "Join with a code")
+            Text(
+                text = "My Trips",
+                style = MaterialTheme.typography.h4,
+                color = PrimaryColor
+            )
+            IconButton(
+                onClick = { showJoinDialog = true },
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(SecondaryColor, CircleShape)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.join),
+                    contentDescription = "Join Trip",
+                    tint = PrimaryColor
+                )
+            }
         }
 
         if (showJoinDialog) {
@@ -76,45 +271,101 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
                 onDismiss = { showJoinDialog = false },
                 onCodeEntered = { code ->
                     showJoinDialog = false
-                     Log.d("TUTAJ","Entered code: $code")
-
+                    Log.d("JoinCode", "Entered code: $code")
                 }
             )
         }
+
         // Filters Section
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            Button(onClick = { /* Filter0 action */ }) { Text("Filter0") }
-            Button(onClick = { /* Filter1 action */ }) { Text("Filter1") }
-            Button(onClick = { /* Filter2 action */ }) { Text("Filter2") }
-            Button(onClick = { /* Filter3 action */ }) { Text("Filter3") }
-        }
+//        ScrollableFilterBar(filterOptions, selectedFilter) { index ->
+//            selectedFilter = index
+//        }
 
-        // Sorting (later..)
-        Text(
-            text = "Sorting by Name",
-            modifier = Modifier.padding(start = 16.dp)
-        )
-
-        // List of Trips
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(8.dp)
+                .padding(horizontal = 16.dp)
         ) {
-            items(listOf("Joined Trip 1", "Joined Trip 2", "Joined Trip 3")) { trip ->
-                TripItem(tripName = trip, onTripClick = {
-                    tripsViewModel.selectTrip(it) // Set elected trip
-                    navController.navigate("this_trip") // "This Trip" screen
-                })
+            items(tripList) { trip ->
+                TripCard(
+                    trip = trip,
+                    onTripClick = {
+                        tripsViewModel.selectTrip(trip.name) // Store selected trip name in ViewModel
+                        navController.navigate("this_trip/${trip.name}") // Pass trip name
+                    }
+                )
             }
         }
     }
 }
+
+@Composable
+fun TripCard(trip: Trip, onTripClick: (String) -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clickable { onTripClick(trip.id) },
+        elevation = 2.dp,
+        shape = RoundedCornerShape(16.dp),
+        backgroundColor = Color.White
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SecondaryColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_placeholder),
+                        contentDescription = null,
+                        tint = PrimaryColor
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column {
+                    Text(
+                        text = trip.name,
+                        style = MaterialTheme.typography.h6,
+                        color = Color.Black
+                    )
+                    Text(
+                        text = "Next activity: ${trip.nextActivity}",
+                        style = MaterialTheme.typography.caption,
+                        color = Color.Gray
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            TripProgressBar(progress = trip.progress)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = trip.dateRange,
+                    style = MaterialTheme.typography.caption,
+                    color = PrimaryColor
+                )
+                IconButton(onClick = { /* Handle menu */ }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_placeholder),
+                        contentDescription = "More options"
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 
 @Composable
@@ -125,32 +376,59 @@ fun JoinCodeDialog(
     var code by remember { mutableStateOf(TextFieldValue("")) }
 
     AlertDialog(
-        onDismissRequest = { onDismiss() },
-        title = { Text(text = "Enter Code") },
-        text = {
-            OutlinedTextField(
-                value = code,
-                onValueChange = { code = it },
-                label = { Text("Code") },
-                singleLine = true
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Join Trip",
+                style = MaterialTheme.typography.h6,
+                color = PrimaryColor
             )
+        },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("Enter Trip Code") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                        focusedBorderColor = PrimaryColor,
+                        cursorColor = PrimaryColor
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Get the code from your trip organizer",
+                    style = MaterialTheme.typography.caption,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
         },
         confirmButton = {
             TextButton(
-                onClick = {
-                    onCodeEntered(code.text) // Pass the entered code to the callback
-                }
+                onClick = { onCodeEntered(code.text) },
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = PrimaryColor,
+                    contentColor = Color.White
+                )
             ) {
-                Text("OK")
+                Text("Join Trip")
             }
         },
         dismissButton = {
             TextButton(
-                onClick = { onDismiss() }
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(
+                    contentColor = PrimaryColor
+                )
             ) {
                 Text("Cancel")
             }
-        }
+        },
+        shape = RoundedCornerShape(16.dp),
+        backgroundColor = Color.White
     )
 }
 
@@ -175,15 +453,23 @@ fun TripItem(tripName: String, onTripClick: (String) -> Unit) {
 @Composable
 fun TripsApp() {
     val navController = rememberNavController()
-    val tripsViewModel: TripsViewModel = viewModel() // Get ViewModel
+    val tripsViewModel: TripsViewModel = viewModel()
 
     Scaffold(
         bottomBar = { BottomNavBar(navController, tripsViewModel) }
     ) { innerPadding ->
-        NavHost(navController = navController, startDestination = "my_trips", Modifier.padding(innerPadding)) {
-            composable("my_trips") { MyTripsScreen(navController, tripsViewModel) }  // Pass ViewModel
-            composable("this_trip") { ThisTripScreen(tripsViewModel) }  // Pass ViewModel to "This Trip"
+        NavHost(
+            navController = navController,
+            startDestination = "my_trips",
+            modifier = Modifier.padding(innerPadding)
+        ) {
+            composable("my_trips") { MyTripsScreen(navController, tripsViewModel) }
+            composable("calendar") { CalendarScreen(tripList) }  // Changed from "this_trip" to "calendar"
             composable("my_profile") { ProfileScreenWrapper() }
+            composable("this_trip/{tripName}") { backStackEntry ->
+                val tripName = backStackEntry.arguments?.getString("tripName")
+                ThisTripScreen(navController, tripName)
+            }
         }
     }
 }
@@ -191,72 +477,139 @@ fun TripsApp() {
 
 @Composable
 fun BottomNavBar(navController: NavHostController, tripsViewModel: TripsViewModel) {
+    val navItems = listOf(
+        NavItem("My Trips", R.drawable.trips, "my_trips"),
+        NavItem("Calendar", R.drawable.newcalendar, "calendar"),  // cooked
+        NavItem("Profile", R.drawable.person, "my_profile")
+    )
+
     BottomNavigation(
-        backgroundColor = Color(0xFFF0F0F0),
-        contentColor = Color.Black
+        backgroundColor = Color.White,
+        elevation = 8.dp
     ) {
-        BottomNavigationItem(
-            icon = { Icon(Icons.Filled.Home, contentDescription = "My Trips") },
-            label = { Text("My Trips") },
-            selected = navController.currentBackStackEntry?.destination?.route == "my_trips",
-            onClick = {
-                navController.navigate("my_trips") {
-                    popUpTo(navController.graph.startDestinationId)
-                    launchSingleTop = true
-                }
-            }
-        )
-        BottomNavigationItem(
-            icon = { Icon(Icons.Filled.Favorite, contentDescription = "Calendar") }, // implement calendar instead of "this trip" screen
-            label = { Text("Calendar") },
-            selected = navController.currentBackStackEntry?.destination?.route == "this_trip",
-            onClick = {
-                navController.navigate("this_trip") {
-                    popUpTo(navController.graph.startDestinationId)
-                    launchSingleTop = true
-                }
-            }
-        )
-        BottomNavigationItem(
-            icon = { Icon(Icons.Filled.Person, contentDescription = "My Profile") },
-            label = { Text("My Profile") },
-            selected = navController.currentBackStackEntry?.destination?.route == "my_profile",
-            onClick = {
-                navController.navigate("my_profile") {
-                    popUpTo(navController.graph.startDestinationId)
-                    launchSingleTop = true
-                }
-            }
-        )
+        val navBackStackEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = navBackStackEntry?.destination?.route
+
+        navItems.forEach { item ->
+            BottomNavigationItem(
+                icon = {
+                    Icon(
+                        painter = painterResource(id = item.icon),
+                        contentDescription = item.title,
+                        modifier = Modifier.size(24.dp)
+                    )
+                },
+                label = {
+                    Text(
+                        item.title,
+                        fontSize = 12.sp,
+                        softWrap = false
+                    )
+                },
+                selected = currentRoute == item.route,
+                onClick = {
+                    if (currentRoute != item.route) {
+                        navController.navigate(item.route) {
+                            popUpTo(navController.graph.startDestinationId) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                },
+                selectedContentColor = PrimaryColor,
+                unselectedContentColor = Color.Gray,
+                alwaysShowLabel = true
+            )
+        }
     }
 }
 
-
-
 @Composable
-fun ThisTripScreen(tripsViewModel: TripsViewModel) {
-    // Observe currently selected trip
-    val selectedTrip by tripsViewModel.selectedTrip.observeAsState("Most Recent Trip")
+fun ThisTripScreen(
+    navController: NavController,
+    tripName: String?
+) {
+    val trip = tripList.find { it.name == tripName }
+
+    if (trip == null) {
+        // If trip not found, show an error and go back
+        LaunchedEffect(Unit) {
+            navController.popBackStack()
+        }
+        return
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(BackgroundColor)
             .padding(16.dp)
     ) {
-        // Example layout based on your screenshot
-        Text(text = selectedTrip, style = MaterialTheme.typography.h4)
+        // Back Button
+        IconButton(onClick = { navController.popBackStack() }) {
+            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+        }
 
-        Text(text = "Amazing Trip Group", style = MaterialTheme.typography.h6)
-        Text(text = "Trip group description", style = MaterialTheme.typography.body2)
+        // Trip Title
+        Text(
+            text = trip.name,
+            style = MaterialTheme.typography.h4,
+            color = PrimaryColor,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
 
-        // later: add other elements like trip details, people involved, budget, calendar etc.
-        LazyColumn {
-            items(listOf("Person1", "Person2", "Person3")) { person ->
-                PersonItem(person)
+        // Trip Date Range
+        Text(
+            text = "📅 ${trip.dateRange}",
+            style = MaterialTheme.typography.body1
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Next Activity
+        Text(
+            text = "Next Activity: ${trip.nextActivity}",
+            style = MaterialTheme.typography.body1,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Placeholder People List
+        Text(
+            text = "People in this trip:",
+            style = MaterialTheme.typography.h6,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
+
+        val people = listOf("Alice", "Bob", "Charlie", "David") // Placeholder data
+
+        Column {
+            people.forEach { person ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "Person Icon",
+                        tint = PrimaryColor
+                    )
+                    Text(
+                        text = person,
+                        modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.body1
+                    )
+                }
             }
         }
     }
 }
+
 
 @Composable
 fun PersonItem(name: String) {
@@ -376,15 +729,18 @@ fun TripsScreenPreview() {
 
 @Composable
 fun ProfileScreenWrapper() {
-    // track login session and user email
     var isLoggedIn by remember { mutableStateOf(false) }
     var userEmail by remember { mutableStateOf("") }
 
     if (isLoggedIn) {
-        // Show profile screen with the logged in email
-        ProfileScreen(email = userEmail)
+        ProfileScreen(
+            email = userEmail,
+            onLogout = {
+                isLoggedIn = false
+                userEmail = ""
+            }
+        )
     } else {
-        // Show the Login screen if not logged in
         LoginScreen(
             onLogin = { email ->
                 isLoggedIn = true
@@ -396,8 +752,12 @@ fun ProfileScreenWrapper() {
 
 @Composable
 fun LoginScreen(onLogin: (String) -> Unit) {
+    var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    var isRegistering by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -406,9 +766,22 @@ fun LoginScreen(onLogin: (String) -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "Log In", fontSize = 24.sp, modifier = Modifier.padding(bottom = 24.dp))
+        Text(
+            text = if (isRegistering) "Create Account" else "Log In",
+            fontSize = 24.sp,
+            modifier = Modifier.padding(bottom = 24.dp)
+        )
 
-        // Email Field
+        if (isRegistering) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Name") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
@@ -417,9 +790,8 @@ fun LoginScreen(onLogin: (String) -> Unit) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // Password Field
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
@@ -429,52 +801,173 @@ fun LoginScreen(onLogin: (String) -> Unit) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Login Button
         Button(
             onClick = {
-                onLogin(email) // Pass the email back to the parent
+                if (isRegistering) {
+                    registerUser(name, email, password, context, onLogin) { isLoading = it }
+                } else {
+                    // Handle login (implement similarly)
+                }
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading
         ) {
-            Text(text = "Log In")
+            if (isLoading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            else Text(if (isRegistering) "Create Account" else "Log In")
+        }
+
+        TextButton(onClick = { isRegistering = !isRegistering }) {
+            Text(
+                text = if (isRegistering) "Already have an account? Log In"
+                else "Don't have an account? Create Account",
+                color = PrimaryColor
+            )
+        }
+    }
+}
+
+private fun registerUser(
+    name: String,
+    email: String,
+    password: String,
+    context: Context,
+    onSuccess: (String) -> Unit,
+    onLoading: (Boolean) -> Unit
+) {
+
+    if (name.isBlank() || email.isBlank() || password.isBlank()) {
+        Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    CoroutineScope(Dispatchers.IO).launch {
+        onLoading(true)
+        try {
+            val response = RetrofitClient.instance.registerUser(
+                UserRegistration(name, email, password)
+            )
+
+            withContext(Dispatchers.Main) {
+                if (response.isSuccessful && response.body()?.success == true) {
+                    onSuccess(email)
+                    Toast.makeText(context, "Registration successful!", Toast.LENGTH_SHORT).show()
+                } else {
+                    val error = response.errorBody()?.string() ?: "Unknown error"
+                    Toast.makeText(context, "Registration failed: $error", Toast.LENGTH_LONG).show()
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Network error: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        } finally {
+            onLoading(false)
         }
     }
 }
 
 @Composable
-fun ProfileScreen(email: String) {
+fun ProfileScreen(email: String, onLogout: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Profile Picture
-        Image(
-            painter = painterResource(id = R.drawable.placeholder), // Replace with actual profile image resource
-            contentDescription = "Profile Picture",
-            modifier = Modifier
-                .size(100.dp)
-                .clip(CircleShape)
-        )
+        Spacer(modifier = Modifier.height(32.dp))
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // temp profile name
-        Text(text = "Ed Wood", fontSize = 24.sp, color = Color.Black)
-
-        // Profile Email (Dynamic)
-        Text(text = email, fontSize = 16.sp, color = Color.Gray)
+        Box(contentAlignment = Alignment.BottomEnd) {
+            Image(
+                painter = painterResource(R.drawable.ic_placeholder),
+                contentDescription = "Profile Picture",
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+            )
+            IconButton(
+                onClick = { /* Handle photo change */ },
+                modifier = Modifier
+                    .size(32.dp)
+                    .background(PrimaryColor, CircleShape)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_placeholder),
+                    contentDescription = "Change Photo",
+                    tint = Color.White
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Options Section
-        ProfileOption("Account Settings")
-        ProfileOption("Notification Preferences")
-        ProfileOption("Privacy & Security")
+        Text(
+            text = "Ed Wood",
+            style = MaterialTheme.typography.h4,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+
+        Text(
+            text = email,
+            style = MaterialTheme.typography.subtitle1,
+            color = Color.Gray,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        ProfileOptionItem(
+            icon = R.drawable.ic_placeholder,
+            text = "Account Settings"
+        )
+        ProfileOptionItem(
+            icon = R.drawable.ic_placeholder,
+            text = "Notifications"
+        )
+        ProfileOptionItem(
+            icon = R.drawable.ic_placeholder,
+            text = "Privacy & Security"
+        )
+        ProfileOptionItem(
+            icon = R.drawable.ic_placeholder,
+            text = "Help & Support"
+        )
+        Button(
+            onClick = onLogout,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
+            colors = ButtonDefaults.buttonColors(
+                backgroundColor = Color.Red,
+                contentColor = Color.White
+            )
+        ) {
+            Text("Log Out")
+        }
+    }
+}
+
+@Composable
+fun ProfileOptionItem(icon: Int, text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { /* Handle click */ }
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            tint = PrimaryColor,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.body1
+        )
     }
 }
 
@@ -495,4 +988,261 @@ fun ProfileOption(optionText: String) {
 @Composable
 fun ProfileScreenPreview() {
     ProfileScreenWrapper()
+}
+@Composable
+fun TripProgressBar(progress: Float) {
+    LinearProgressIndicator(
+        progress = progress,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .clip(RoundedCornerShape(4.dp)),
+        color = PrimaryColor,
+        backgroundColor = Color.LightGray
+    )
+}
+
+
+@Composable
+fun TripDayDetailItem(trip: Trip) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        elevation = 2.dp,
+        backgroundColor = MaterialTheme.colors.surface
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(generatePersistentColor(trip.id))
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = trip.name,
+                    style = MaterialTheme.typography.subtitle1,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = trip.dateRange,
+                    style = MaterialTheme.typography.caption
+                )
+                Text(
+                    text = trip.nextActivity,
+                    style = MaterialTheme.typography.caption,
+                    color = MaterialTheme.colors.primary
+                )
+            }
+        }
+    }
+}
+
+
+@Composable
+fun CalendarScreen(tripList: List<Trip>) {
+    val currentDate = remember { mutableStateOf(LocalDate.now()) }
+    var selectedDay by remember { mutableStateOf<LocalDate?>(null) }
+    val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+    // Convert Trips to calendar events with colors
+    val tripEvents = remember(tripList) {
+        tripList.map { trip ->
+            val (startDate, endDate) = parseDateRange(trip.dateRange)
+            TripEvent(
+                id = trip.id.hashCode(),
+                title = trip.name,
+                startDate = startDate,
+                endDate = endDate,
+                color = generatePersistentColor(trip.id)
+            )
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+
+        // Month header with navigation
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            IconButton(onClick = {
+                currentDate.value = currentDate.value.minusMonths(1)
+            }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Previous Month")
+            }
+
+            Text(
+                text = currentDate.value.format(DateTimeFormatter.ofPattern("MMMM yyyy")),
+                style = MaterialTheme.typography.h5,
+                modifier = Modifier.padding(8.dp)
+            )
+
+            IconButton(onClick = {
+                currentDate.value = currentDate.value.plusMonths(1)
+            }) {
+                Icon(Icons.Default.ArrowForward, contentDescription = "Next Month")
+            }
+        }
+
+
+
+        // Days of week header
+        Row(modifier = Modifier.fillMaxWidth()) {
+            daysOfWeek.forEach { day ->
+                Text(
+                    text = day,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(4.dp),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colors.primary
+                )
+            }
+        }
+
+
+        // Calendar days grid
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(7),
+            modifier = Modifier.weight(1f)
+        ) {
+            items(getCalendarDays(currentDate.value)) { day ->
+                val dayEvents = tripEvents.filter {
+                    !day.isBefore(it.startDate) && !day.isAfter(it.endDate)
+                }
+
+                DayCell(
+                    day = day,
+                    isCurrentMonth = day.month == currentDate.value.month,
+                    isToday = day == LocalDate.now(),
+                    trips = dayEvents,
+                    onClick = { selectedDay = day },
+                    modifier = Modifier
+                        .aspectRatio(1f)
+                        .padding(2.dp)
+                )
+            }
+        }
+        selectedDay?.let { day ->
+            val daysTrips = tripList.filter { trip ->
+                val (start, end) = parseDateRange(trip.dateRange)
+                !day.isBefore(start) && !day.isAfter(end)
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+                    .animateContentSize()
+            ) {
+                Text(
+                    text = day.format(DateTimeFormatter.ofPattern("EEEE, MMM d")),
+                    style = MaterialTheme.typography.h6,
+                    color = MaterialTheme.colors.primary
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (daysTrips.isEmpty()) {
+                    Text("No trips on this day", fontStyle = FontStyle.Italic)
+                } else {
+                    daysTrips.forEach { trip ->
+                        TripDayDetailItem(trip = trip)
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+private fun getCalendarDays(date: LocalDate): List<LocalDate> {
+    val yearMonth = YearMonth.from(date)
+    val firstDayOfMonth = yearMonth.atDay(1)
+    val firstDayOfWeek = firstDayOfMonth.dayOfWeek.value % 7  // Monday start
+
+    return List(42) { index ->  // 6 weeks * 7 days
+        when {
+            index < firstDayOfWeek -> firstDayOfMonth.minusDays((firstDayOfWeek - index).toLong())
+            index >= firstDayOfWeek + yearMonth.lengthOfMonth() ->
+                firstDayOfMonth.plusDays((index - firstDayOfWeek).toLong())
+            else -> firstDayOfMonth.plusDays((index - firstDayOfWeek).toLong())
+        }
+    }
+}
+
+@Composable
+fun DayCell(
+    day: LocalDate,
+    isCurrentMonth: Boolean,
+    isToday: Boolean,
+    trips: List<TripEvent>,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .background(
+                color = when {
+                    isToday -> MaterialTheme.colors.primary.copy(alpha = 0.2f)
+                    !isCurrentMonth -> Color.LightGray.copy(alpha = 0.3f)
+                    else -> Color.Transparent
+                },
+                shape = RoundedCornerShape(8.dp)
+            )
+            .border(
+                width = 1.dp,
+                color = if (isCurrentMonth) Color.LightGray else Color.Transparent,
+                shape = RoundedCornerShape(8.dp)
+            )
+    ) {
+        Column {
+            Text(
+                text = day.dayOfMonth.toString(),
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .padding(4.dp),
+                color = when {
+                    !isCurrentMonth -> Color.Gray
+                    isToday -> MaterialTheme.colors.primary
+                    else -> MaterialTheme.colors.onBackground
+                }
+            )
+
+            // Trip indicators
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                trips.take(3).forEach { trip ->
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(trip.color)
+                    )
+                }
+            }
+        }
+    }
 }
