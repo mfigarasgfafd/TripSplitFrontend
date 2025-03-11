@@ -54,6 +54,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -166,7 +168,8 @@ data class Trip(
     val name: String,
     val dateRange: String,
     val nextActivity: String,
-    val progress: Float
+    val progress: Float,
+    val imageResId: Int
 )
 
 data class TripEvent(
@@ -178,9 +181,9 @@ data class TripEvent(
 )
 
 val tripList = listOf(
-    Trip("1", "Summer Europe Trip", "Jul 15 - Aug 2", "Flight booking", 0.4f),
-    Trip("2", "Asia Backpacking", "Dec 1 - Jan 15", "Visa applications", 0.2f),
-    Trip("3", "Weekend Ski Trip", "Feb 10 - Feb 12", "Equipment rental", 0.8f)
+    Trip("1", "Summer Europe Trip", "Jul 15 - Aug 2", "Flight booking", 0.4f, R.drawable.europe),
+    Trip("2", "Asia Backpacking", "Dec 1 - Jan 15", "Visa applications", 0.2f, R.drawable.zhongnahai),
+    Trip("3", "Weekend Ski Trip", "Feb 10 - Feb 12", "Equipment rental", 0.8f, R.drawable.ski)
 )
 
 
@@ -239,7 +242,7 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
             .fillMaxSize()
             .background(BackgroundColor)
     ) {
-        // Header Section
+        // Header Section (unchanged)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -256,7 +259,6 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
                 onClick = { showJoinDialog = true },
                 modifier = Modifier
                     .size(48.dp)
-                    .background(SecondaryColor, CircleShape)
             ) {
                 Icon(
                     painter = painterResource(R.drawable.join),
@@ -276,11 +278,7 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
             )
         }
 
-        // Filters Section
-//        ScrollableFilterBar(filterOptions, selectedFilter) { index ->
-//            selectedFilter = index
-//        }
-
+        // Scrollable trip list
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -290,10 +288,11 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
                 TripCard(
                     trip = trip,
                     onTripClick = {
-                        tripsViewModel.selectTrip(trip.name) // Store selected trip name in ViewModel
-                        navController.navigate("this_trip/${trip.name}") // Pass trip name
+                        tripsViewModel.selectTrip(trip.name)
+                        navController.navigate("this_trip/${trip.name}")
                     }
                 )
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }
@@ -304,63 +303,50 @@ fun TripCard(trip: Trip, onTripClick: (String) -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp)
             .clickable { onTripClick(trip.id) },
         elevation = 2.dp,
         shape = RoundedCornerShape(16.dp),
         backgroundColor = Color.White
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(SecondaryColor),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_placeholder),
-                        contentDescription = null,
-                        tint = PrimaryColor
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                Column {
-                    Text(
-                        text = trip.name,
-                        style = MaterialTheme.typography.h6,
-                        color = Color.Black
-                    )
-                    Text(
-                        text = "Next activity: ${trip.nextActivity}",
-                        style = MaterialTheme.typography.caption,
-                        color = Color.Gray
-                    )
-                }
+            // Image with fixed aspect ratio
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            ) {
+                Image(
+                    painter = painterResource(id = trip.imageResId),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            TripProgressBar(progress = trip.progress)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            // Trip details
+            Column(modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text(
+                    text = trip.name,
+                    style = MaterialTheme.typography.h6,
+                    color = Color.Black
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Next activity: ${trip.nextActivity}",
+                    style = MaterialTheme.typography.caption,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                TripProgressBar(progress = trip.progress)
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = trip.dateRange,
                     style = MaterialTheme.typography.caption,
                     color = PrimaryColor
                 )
-                IconButton(onClick = { /* Handle menu */ }) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_placeholder),
-                        contentDescription = "More options"
-                    )
-                }
             }
         }
     }
@@ -525,7 +511,6 @@ fun BottomNavBar(navController: NavHostController, tripsViewModel: TripsViewMode
         }
     }
 }
-
 @Composable
 fun ThisTripScreen(
     navController: NavController,
@@ -534,12 +519,16 @@ fun ThisTripScreen(
     val trip = tripList.find { it.name == tripName }
 
     if (trip == null) {
-        // If trip not found, show an error and go back
         LaunchedEffect(Unit) {
             navController.popBackStack()
         }
         return
     }
+
+    var showExpenseDialog by remember { mutableStateOf(false) }
+    var expenseTitle by remember { mutableStateOf("") }
+    var expenseAmount by remember { mutableStateOf("") }
+    val expenses = remember { mutableStateListOf<Expense>() }
 
     Column(
         modifier = Modifier
@@ -547,12 +536,21 @@ fun ThisTripScreen(
             .background(BackgroundColor)
             .padding(16.dp)
     ) {
-        // Back Button
-        IconButton(onClick = { navController.popBackStack() }) {
-            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+        // Header with Back and Quit Trip buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { navController.popBackStack() }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = PrimaryColor)
+            }
+            TextButton(onClick = { /* TODO: Handle quit trip */ }) {
+                Text("Quit Trip", color = PrimaryColor)
+            }
         }
 
-        // Trip Title
+        // Trip Header Section
         Text(
             text = trip.name,
             style = MaterialTheme.typography.h4,
@@ -560,55 +558,160 @@ fun ThisTripScreen(
             modifier = Modifier.padding(vertical = 8.dp)
         )
 
-        // Trip Date Range
+        // Trip Info Cards
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            elevation = 4.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "📅 ${trip.dateRange}",
+                    style = MaterialTheme.typography.body1
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Next Activity: ${trip.nextActivity}",
+                    style = MaterialTheme.typography.body1,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // People List Section
         Text(
-            text = "📅 ${trip.dateRange}",
-            style = MaterialTheme.typography.body1
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Next Activity
-        Text(
-            text = "Next Activity: ${trip.nextActivity}",
-            style = MaterialTheme.typography.body1,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Placeholder People List
-        Text(
-            text = "People in this trip:",
+            text = "Travel Companions",
             style = MaterialTheme.typography.h6,
+            color = PrimaryColor,
             modifier = Modifier.padding(vertical = 8.dp)
         )
 
-        val people = listOf("Alice", "Bob", "Charlie", "David") // Placeholder data
-
+        val people = listOf("Alice", "Bob", "Charlie", "David")
         Column {
             people.forEach { person ->
-                Row(
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    elevation = 2.dp
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = "Person Icon",
-                        tint = PrimaryColor
-                    )
-                    Text(
-                        text = person,
-                        modifier = Modifier.padding(start = 8.dp),
-                        style = MaterialTheme.typography.body1
-                    )
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "Person",
+                            tint = PrimaryColor
+                        )
+                        Text(
+                            text = person,
+                            modifier = Modifier.padding(start = 8.dp),
+                            style = MaterialTheme.typography.body1
+                        )
+                    }
+                }
+            }
+        }
+
+        // Expenses Section
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Expenses",
+                style = MaterialTheme.typography.h6,
+                color = PrimaryColor
+            )
+            Button(
+                onClick = { showExpenseDialog = true },
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = PrimaryColor,
+                    contentColor = Color.White
+                )
+            ) {
+                Text("Record Expense")
+            }
+        }
+
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(expenses) { expense ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    elevation = 2.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = expense.title, style = MaterialTheme.typography.body1)
+                        Text(
+                            text = "%.2f PLN".format(expense.amount),
+                            style = MaterialTheme.typography.body1,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
     }
+
+    if (showExpenseDialog) {
+        AlertDialog(
+            onDismissRequest = { showExpenseDialog = false },
+            title = { Text("Record New Expense", color = PrimaryColor) },
+            text = {
+                Column {
+                    TextField(
+                        value = expenseTitle,
+                        onValueChange = { expenseTitle = it },
+                        label = { Text("Expense Title") },
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    TextField(
+                        value = expenseAmount,
+                        onValueChange = { expenseAmount = it },
+                        label = { Text("Amount (PLN)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        expenseAmount.toDoubleOrNull()?.let {
+                            expenses.add(Expense(expenseTitle, it))
+                            expenseTitle = ""
+                            expenseAmount = ""
+                            showExpenseDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(backgroundColor = PrimaryColor)
+                ) {
+                    Text("Add", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExpenseDialog = false }) {
+                    Text("Cancel", color = PrimaryColor)
+                }
+            }
+        )
+    }
 }
+
+data class Expense(
+    val title: String,
+    val amount: Double
+)
 
 
 @Composable
