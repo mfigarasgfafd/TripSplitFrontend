@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
@@ -61,6 +62,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.CoroutineScope
@@ -92,11 +95,9 @@ data class NavItem(
     val icon: Int,
     val route: String
 )
-data class UserRegistration(
-    @SerializedName("name") val name: String,
-    @SerializedName("email") val email: String,
-    @SerializedName("password") val password: String
-)
+
+
+
 
 data class ApiResponse(
     @SerializedName("success") val success: Boolean,
@@ -219,6 +220,42 @@ fun generatePersistentColor(tripId: String): Color {
         blue = random.nextFloat().coerceIn(0.3f, 0.7f)
     )
 }
+
+
+class AuthViewModel : ViewModel() {
+    sealed class AuthState {
+        object Idle : AuthState()
+        object Loading : AuthState()
+        data class Success(val email: String) : AuthState()
+        data class Error(val message: String) : AuthState()
+    }
+
+    private val _authState = mutableStateOf<AuthState>(AuthState.Idle)
+    val authState: State<AuthState> = _authState
+
+    fun registerUser(name: String, email: String, password: String) {
+        viewModelScope.launch {
+            _authState.value = AuthState.Loading
+            try {
+                val response = NetworkClient.apiService.createUser(
+                    UserRegistration(name, email, password)
+                )
+
+                if (response.isSuccessful) {
+                    _authState.value = AuthState.Success(email)
+                } else {
+                    _authState.value = AuthState.Error(
+                        response.errorBody()?.string() ?: "Registration failed"
+                    )
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("Network error: ${e.message}")
+            }
+        }
+    }
+}
+
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -858,9 +895,22 @@ fun LoginScreen(onLogin: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
     var isRegistering by remember { mutableStateOf(false) }
+    val authViewModel: AuthViewModel = viewModel()
     val context = LocalContext.current
+
+    LaunchedEffect(authViewModel.authState.value) {
+        when (val state = authViewModel.authState.value) {
+            is AuthViewModel.AuthState.Success -> {
+                onLogin(state.email)
+                Toast.makeText(context, "Registration successful!", Toast.LENGTH_SHORT).show()
+            }
+            is AuthViewModel.AuthState.Error -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
+            }
+            else -> {}
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -909,16 +959,23 @@ fun LoginScreen(onLogin: (String) -> Unit) {
         Button(
             onClick = {
                 if (isRegistering) {
-                    registerUser(name, email, password, context, onLogin) { isLoading = it }
+                    if (name.isBlank() || email.isBlank() || password.isBlank()) {
+                        Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    authViewModel.registerUser(name, email, password)
                 } else {
-                    // Handle login (implement similarly)
+                    // Handle login
                 }
             },
             modifier = Modifier.fillMaxWidth(),
-            enabled = !isLoading
+            enabled = authViewModel.authState.value !is AuthViewModel.AuthState.Loading
         ) {
-            if (isLoading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
-            else Text(if (isRegistering) "Create Account" else "Log In")
+            if (authViewModel.authState.value is AuthViewModel.AuthState.Loading) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            } else {
+                Text(if (isRegistering) "Create Account" else "Log In")
+            }
         }
 
         TextButton(onClick = { isRegistering = !isRegistering }) {
@@ -931,45 +988,45 @@ fun LoginScreen(onLogin: (String) -> Unit) {
     }
 }
 
-private fun registerUser(
-    name: String,
-    email: String,
-    password: String,
-    context: Context,
-    onSuccess: (String) -> Unit,
-    onLoading: (Boolean) -> Unit
-) {
-
-    if (name.isBlank() || email.isBlank() || password.isBlank()) {
-        Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
-        return
-    }
-
-    CoroutineScope(Dispatchers.IO).launch {
-        onLoading(true)
-        try {
-            val response = RetrofitClient.instance.registerUser(
-                UserRegistration(name, email, password)
-            )
-
-            withContext(Dispatchers.Main) {
-                if (response.isSuccessful && response.body()?.success == true) {
-                    onSuccess(email)
-                    Toast.makeText(context, "Registration successful!", Toast.LENGTH_SHORT).show()
-                } else {
-                    val error = response.errorBody()?.string() ?: "Unknown error"
-                    Toast.makeText(context, "Registration failed: $error", Toast.LENGTH_LONG).show()
-                }
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Network error: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        } finally {
-            onLoading(false)
-        }
-    }
-}
+//private fun registerUser(
+//    name: String,
+//    email: String,
+//    password: String,
+//    context: Context,
+//    onSuccess: (String) -> Unit,
+//    onLoading: (Boolean) -> Unit
+//) {
+//
+//    if (name.isBlank() || email.isBlank() || password.isBlank()) {
+//        Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
+//        return
+//    }
+//
+//    CoroutineScope(Dispatchers.IO).launch {
+//        onLoading(true)
+//        try {
+//            val response = RetrofitClient.instance.registerUser(
+//                UserRegistration(name, email, password)
+//            )
+//
+//            withContext(Dispatchers.Main) {
+//                if (response.isSuccessful && response.body()?.success == true) {
+//                    onSuccess(email)
+//                    Toast.makeText(context, "Registration successful!", Toast.LENGTH_SHORT).show()
+//                } else {
+//                    val error = response.errorBody()?.string() ?: "Unknown error"
+//                    Toast.makeText(context, "Registration failed: $error", Toast.LENGTH_LONG).show()
+//                }
+//            }
+//        } catch (e: Exception) {
+//            withContext(Dispatchers.Main) {
+//                Toast.makeText(context, "Network error: ${e.message}", Toast.LENGTH_LONG).show()
+//            }
+//        } finally {
+//            onLoading(false)
+//        }
+//    }
+//}
 
 @Composable
 fun ProfileScreen(email: String, onLogout: () -> Unit) {
