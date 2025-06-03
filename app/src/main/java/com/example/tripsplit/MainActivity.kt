@@ -181,6 +181,7 @@ data class TripEvent(
     val color: Color
 )
 
+// next activity jako takie pojedyńcze to do?
 val tripList = listOf(
     Trip("1", "Summer Europe Trip", "Jul 15 - Aug 2", "Flight booking", 0.4f, R.drawable.europe),
     Trip("2", "Asia Backpacking", "Dec 1 - Jan 15", "Visa applications", 0.2f, R.drawable.zhongnahai),
@@ -244,17 +245,65 @@ class AuthViewModel : ViewModel() {
                 if (response.isSuccessful) {
                     _authState.value = AuthState.Success(email)
                 } else {
-                    _authState.value = AuthState.Error(
-                        response.errorBody()?.string() ?: "Registration failed"
-                    )
+                    val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                    Log.e("Registration", "Failed: $errorBody")
+                    _authState.value = AuthState.Error("Registration failed: ${response.code()} - $errorBody")
                 }
             } catch (e: Exception) {
+                Log.e("Registration", "Exception: ${e.message}", e)
                 _authState.value = AuthState.Error("Network error: ${e.message}")
             }
         }
     }
 }
 
+class GroupViewModel : ViewModel() {
+    private val apiService = NetworkClient.apiService
+
+    val users = mutableStateListOf<User>()
+    val createGroupState = mutableStateOf<CreateGroupState>(CreateGroupState.Idle)
+
+    sealed class CreateGroupState {
+        object Idle : CreateGroupState()
+        object Loading : CreateGroupState()
+        data class Success(val message: String) : CreateGroupState()
+        data class Error(val message: String) : CreateGroupState()
+    }
+
+    init {
+        loadUsers()
+    }
+
+    private fun loadUsers() {
+        viewModelScope.launch {
+            try {
+                val response = apiService.getUsers()
+                if (response.isSuccessful) {
+                    users.clear()
+                    users.addAll(response.body() ?: emptyList())
+                }
+            } catch (e: Exception) {
+                Log.e("GroupViewModel", "Failed to load users", e)
+            }
+        }
+    }
+
+    fun createGroup(name: String, ownerId: Int) {
+        viewModelScope.launch {
+            createGroupState.value = CreateGroupState.Loading
+            try {
+                val response = apiService.createGroup(GroupRequest(name, ownerId))
+                if (response.isSuccessful) {
+                    createGroupState.value = CreateGroupState.Success("Group created successfully!")
+                } else {
+                    createGroupState.value = CreateGroupState.Error("Failed to create group: ${response.message()}")
+                }
+            } catch (e: Exception) {
+                createGroupState.value = CreateGroupState.Error("Network error: ${e.message}")
+            }
+        }
+    }
+}
 
 
 class MainActivity : ComponentActivity() {
@@ -271,15 +320,34 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel = viewModel()) {
     var showJoinDialog by remember { mutableStateOf(false) }
-    val filterOptions = listOf("All", "Active", "Upcoming", "Completed")
-    var selectedFilter by remember { mutableStateOf(0) }
+    var showCreateGroupDialog by remember { mutableStateOf(false) }
+    val groupViewModel: GroupViewModel = viewModel()
+    val context = LocalContext.current
+
+    // Handle create group state changes
+    LaunchedEffect(groupViewModel.createGroupState.value) {
+        when (val state = groupViewModel.createGroupState.value) {
+            is GroupViewModel.CreateGroupState.Success -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
+                showCreateGroupDialog = false
+                // Reset state after handling
+                groupViewModel.createGroupState.value = GroupViewModel.CreateGroupState.Idle
+            }
+            is GroupViewModel.CreateGroupState.Error -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
+                // Reset state after handling
+                groupViewModel.createGroupState.value = GroupViewModel.CreateGroupState.Idle
+            }
+            else -> {}
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(BackgroundColor)
     ) {
-        // Header Section (unchanged)
+        // Header Section - Add Create Group button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -292,16 +360,34 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
                 style = MaterialTheme.typography.h4,
                 color = PrimaryColor
             )
-            IconButton(
-                onClick = { showJoinDialog = true },
-                modifier = Modifier
-                    .size(48.dp)
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.join),
-                    contentDescription = "Join Trip",
-                    tint = PrimaryColor
-                )
+
+            Row {
+                // Create Group button
+                IconButton(
+                    onClick = { showCreateGroupDialog = true },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .padding(end = 8.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_create_group),
+                        contentDescription = "Create Group",
+                        tint = PrimaryColor
+                    )
+                }
+
+                // Join Trip button
+                IconButton(
+                    onClick = { showJoinDialog = true },
+                    modifier = Modifier
+                        .size(48.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.join),
+                        contentDescription = "Join Trip",
+                        tint = PrimaryColor
+                    )
+                }
             }
         }
 
@@ -312,6 +398,17 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
                     showJoinDialog = false
                     Log.d("JoinCode", "Entered code: $code")
                 }
+            )
+        }
+
+        if (showCreateGroupDialog) {
+            CreateGroupDialog(
+                users = groupViewModel.users,
+                onDismiss = { showCreateGroupDialog = false },
+                onCreate = { name, ownerId ->
+                    groupViewModel.createGroup(name, ownerId)
+                },
+                isLoading = groupViewModel.createGroupState.value is GroupViewModel.CreateGroupState.Loading
             )
         }
 
@@ -388,6 +485,97 @@ fun TripCard(trip: Trip, onTripClick: (String) -> Unit) {
         }
     }
 }
+
+@Composable
+fun CreateGroupDialog(
+    users: List<User>,
+    onDismiss: () -> Unit,
+    onCreate: (String, Int) -> Unit,
+    isLoading: Boolean
+) {
+    var groupName by remember { mutableStateOf("") }
+    var selectedOwnerId by remember { mutableStateOf(-1) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create New Group", color = PrimaryColor) },
+        text = {
+            Column {
+                TextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text("Group Name") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text("Select Owner:", style = MaterialTheme.typography.body1)
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(modifier = Modifier.height(200.dp)) {
+                    items(users) { user ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedOwnerId = user.id }
+                                .padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedOwnerId == user.id,
+                                onClick = { selectedOwnerId = user.id }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(user.name, style = MaterialTheme.typography.body1)
+                                Text(user.email, style = MaterialTheme.typography.caption)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (groupName.isNotBlank() && selectedOwnerId != -1) {
+                        onCreate(groupName, selectedOwnerId)
+                    }
+                },
+                enabled = !isLoading && groupName.isNotBlank() && selectedOwnerId != -1,
+                colors = ButtonDefaults.buttonColors(backgroundColor = PrimaryColor)
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = Color.White
+                    )
+                } else {
+                    Text("Create", color = Color.White)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isLoading
+            ) {
+                Text("Cancel", color = PrimaryColor)
+            }
+        }
+    )
+}
+
+
+
+
+
+
+
+
 
 
 
