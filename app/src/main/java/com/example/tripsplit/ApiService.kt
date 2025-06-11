@@ -1,5 +1,6 @@
 package com.example.tripsplit
 
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -7,9 +8,8 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 
 interface ApiService {
-    // Existing endpoints
     @POST("user/create_user")
-    suspend fun createUser(@Body user: UserRegistration): Response<Void>
+    suspend fun createUser(@Body user: UserRegistration): Response<ResponseBody>
 
     // New endpoints for groups
     @GET("user/get_users")

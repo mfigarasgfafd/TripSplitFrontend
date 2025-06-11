@@ -170,7 +170,8 @@ data class Trip(
     val dateRange: String,
     val nextActivity: String,
     val progress: Float,
-    val imageResId: Int
+    val imageResId: Int,
+    val isFromBackend: Boolean = false // To distinguish mock vs real trips
 )
 
 data class TripEvent(
@@ -227,7 +228,7 @@ class AuthViewModel : ViewModel() {
     sealed class AuthState {
         object Idle : AuthState()
         object Loading : AuthState()
-        data class Success(val email: String) : AuthState()
+        data class Success(val id: Int) : AuthState()
         data class Error(val message: String) : AuthState()
     }
 
@@ -243,17 +244,27 @@ class AuthViewModel : ViewModel() {
                 )
 
                 if (response.isSuccessful) {
-                    _authState.value = AuthState.Success(email)
+                    // Handle successful registration without ID
+                    // For now, we'll use a dummy ID - in real app, fetch user
+                    _authState.value = AuthState.Success(1)
                 } else {
                     val errorBody = response.errorBody()?.string() ?: "Unknown error"
-                    Log.e("Registration", "Failed: $errorBody")
-                    _authState.value = AuthState.Error("Registration failed: ${response.code()} - $errorBody")
+                    _authState.value = AuthState.Error("Registration failed: $errorBody")
                 }
             } catch (e: Exception) {
-                Log.e("Registration", "Exception: ${e.message}", e)
                 _authState.value = AuthState.Error("Network error: ${e.message}")
             }
         }
+    }
+    fun loginUser(email: String, password: String) {
+        // Implement login logic
+    }
+
+    private fun parseUserIdFromResponse(responseText: String): Int? {
+        // Parse response like: "User created succesfully: User { id: 0, ... }"
+        val regex = Regex("""id: (\d+)""")
+        val match = regex.find(responseText)
+        return match?.groupValues?.get(1)?.toIntOrNull()
     }
 }
 
@@ -274,16 +285,18 @@ class GroupViewModel : ViewModel() {
         loadUsers()
     }
 
-    private fun loadUsers() {
+    fun loadUsers() {
         viewModelScope.launch {
             try {
                 val response = apiService.getUsers()
                 if (response.isSuccessful) {
                     users.clear()
                     users.addAll(response.body() ?: emptyList())
+                } else {
+                    Log.e("GroupViewModel", "Failed to load users: ${response.message()}")
                 }
             } catch (e: Exception) {
-                Log.e("GroupViewModel", "Failed to load users", e)
+                Log.e("GroupViewModel", "Error loading users", e)
             }
         }
     }
@@ -296,7 +309,8 @@ class GroupViewModel : ViewModel() {
                 if (response.isSuccessful) {
                     createGroupState.value = CreateGroupState.Success("Group created successfully!")
                 } else {
-                    createGroupState.value = CreateGroupState.Error("Failed to create group: ${response.message()}")
+                    val error = response.errorBody()?.string() ?: "Unknown error"
+                    createGroupState.value = CreateGroupState.Error("Failed to create group: $error")
                 }
             } catch (e: Exception) {
                 createGroupState.value = CreateGroupState.Error("Network error: ${e.message}")
@@ -318,11 +332,22 @@ class MainActivity : ComponentActivity() {
 
 
 @Composable
-fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel = viewModel()) {
+fun MyTripsScreen(
+    navController: NavController,
+    userId: Int,
+    tripsViewModel: TripsViewModel = viewModel()
+) {
     var showJoinDialog by remember { mutableStateOf(false) }
     var showCreateGroupDialog by remember { mutableStateOf(false) }
     val groupViewModel: GroupViewModel = viewModel()
     val context = LocalContext.current
+
+    // Load trips when screen appears or userId changes
+    LaunchedEffect(userId) {
+        if (userId != 0) { // Only load if we have a valid user ID
+            tripsViewModel.loadUserTrips(userId)
+        }
+    }
 
     // Handle create group state changes
     LaunchedEffect(groupViewModel.createGroupState.value) {
@@ -330,12 +355,11 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
             is GroupViewModel.CreateGroupState.Success -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
                 showCreateGroupDialog = false
-                // Reset state after handling
+                tripsViewModel.loadUserTrips(userId) // Refresh trips
                 groupViewModel.createGroupState.value = GroupViewModel.CreateGroupState.Idle
             }
             is GroupViewModel.CreateGroupState.Error -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
-                // Reset state after handling
                 groupViewModel.createGroupState.value = GroupViewModel.CreateGroupState.Idle
             }
             else -> {}
@@ -347,7 +371,7 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
             .fillMaxSize()
             .background(BackgroundColor)
     ) {
-        // Header Section - Add Create Group button
+        // Header Section
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -362,41 +386,111 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
             )
 
             Row {
-                // Create Group button
                 IconButton(
                     onClick = { showCreateGroupDialog = true },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .padding(end = 8.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_create_group),
                         contentDescription = "Create Group",
-                        tint = PrimaryColor
+                        tint = PrimaryColor,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
-                // Join Trip button
                 IconButton(
                     onClick = { showJoinDialog = true },
-                    modifier = Modifier
-                        .size(48.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.join),
                         contentDescription = "Join Trip",
-                        tint = PrimaryColor
+                        tint = PrimaryColor,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
         }
 
+        // Error state
+        tripsViewModel.errorState.value?.let { error ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = error,
+                    color = Color.Red,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
+        // Loading indicator
+        if (tripsViewModel.isLoading.value) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = PrimaryColor)
+            }
+        }
+        // Show trips
+        else if (tripsViewModel.trips.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp)
+            ) {
+                items(tripsViewModel.trips) { trip ->
+                    TripCard(
+                        trip = trip,
+                        onTripClick = {
+                            navController.navigate("this_trip/${trip.id}")
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+        }
+        // Empty state
+        else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("No trips found", style = MaterialTheme.typography.h6)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Create a new group or join an existing one to get started",
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showCreateGroupDialog = true },
+                        colors = ButtonDefaults.buttonColors(backgroundColor = PrimaryColor)
+                    ) {
+                        Text("Create Group", color = Color.White)
+                    }
+                }
+            }
+        }
+
+        // Dialogs
         if (showJoinDialog) {
             JoinCodeDialog(
                 onDismiss = { showJoinDialog = false },
                 onCodeEntered = { code ->
                     showJoinDialog = false
                     Log.d("JoinCode", "Entered code: $code")
+                    tripsViewModel.loadUserTrips(userId) // Refresh trips
                 }
             )
         }
@@ -410,24 +504,6 @@ fun MyTripsScreen(navController: NavController, tripsViewModel: TripsViewModel =
                 },
                 isLoading = groupViewModel.createGroupState.value is GroupViewModel.CreateGroupState.Loading
             )
-        }
-
-        // Scrollable trip list
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp)
-        ) {
-            items(tripList) { trip ->
-                TripCard(
-                    trip = trip,
-                    onTripClick = {
-                        tripsViewModel.selectTrip(trip.name)
-                        navController.navigate("this_trip/${trip.name}")
-                    }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
         }
     }
 }
@@ -664,22 +740,74 @@ fun TripItem(tripName: String, onTripClick: (String) -> Unit) {
 @Composable
 fun TripsApp() {
     val navController = rememberNavController()
-    val tripsViewModel: TripsViewModel = viewModel()
+    val authViewModel: AuthViewModel = viewModel()
+    val currentUser = remember { mutableStateOf<User?>(null) }
+
+    // Handle auth state
+    LaunchedEffect(authViewModel.authState.value) {
+        when (val state = authViewModel.authState.value) {
+            is AuthViewModel.AuthState.Success -> {
+                // For demo, create a user object - in real app, fetch user details
+                currentUser.value = User(
+                    id = state.id,
+                    name = "User ${state.id}",
+                    email = "user${state.id}@example.com",
+                    password = ""
+                )
+            }
+            else -> {}
+        }
+    }
 
     Scaffold(
-        bottomBar = { BottomNavBar(navController, tripsViewModel) }
+        bottomBar = { BottomNavBar(navController) }
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = "my_trips",
+            startDestination = if (currentUser.value != null) "my_trips" else "login",
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable("my_trips") { MyTripsScreen(navController, tripsViewModel) }
-            composable("calendar") { CalendarScreen(tripList) }  // Changed from "this_trip" to "calendar"
-            composable("my_profile") { ProfileScreenWrapper() }
-            composable("this_trip/{tripName}") { backStackEntry ->
-                val tripName = backStackEntry.arguments?.getString("tripName")
-                ThisTripScreen(navController, tripName)
+            composable("my_trips") {
+                if (currentUser.value != null) {
+                    MyTripsScreen(
+                        navController = navController,
+                        userId = currentUser.value!!.id
+                    )
+                } else {
+                    // Redirect to login if no user
+                    LaunchedEffect(Unit) {
+                        navController.navigate("login") {
+                            popUpTo("my_trips") { inclusive = true }
+                        }
+                    }
+                }
+            }
+            composable("calendar") { CalendarScreen(emptyList()) }
+            composable("my_profile") {
+                if (currentUser.value != null) {
+                    ProfileScreenWrapper()
+                } else {
+                    // Redirect to login
+                    LaunchedEffect(Unit) {
+                        navController.navigate("login") {
+                            popUpTo("my_profile") { inclusive = true }
+                        }
+                    }
+                }
+            }
+            composable("this_trip/{tripId}") { backStackEntry ->
+                val tripId = backStackEntry.arguments?.getString("tripId")
+                ThisTripScreen(navController, tripId)
+            }
+            composable("login") {
+                LoginScreen(
+                    onLogin = { user ->
+                        currentUser.value = user
+                        navController.navigate("my_trips") {
+                            popUpTo("login") { inclusive = true }
+                        }
+                    }
+                )
             }
         }
     }
@@ -687,10 +815,10 @@ fun TripsApp() {
 
 
 @Composable
-fun BottomNavBar(navController: NavHostController, tripsViewModel: TripsViewModel) {
+fun BottomNavBar(navController: NavHostController) {
     val navItems = listOf(
         NavItem("My Trips", R.drawable.trips, "my_trips"),
-        NavItem("Calendar", R.drawable.newcalendar, "calendar"),  // cooked
+        NavItem("Calendar", R.drawable.newcalendar, "calendar"),
         NavItem("Profile", R.drawable.person, "my_profile")
     )
 
@@ -721,7 +849,7 @@ fun BottomNavBar(navController: NavHostController, tripsViewModel: TripsViewMode
                 onClick = {
                     if (currentRoute != item.route) {
                         navController.navigate(item.route) {
-                            popUpTo(navController.graph.startDestinationId) {
+                            popUpTo("my_trips") {
                                 saveState = true
                             }
                             launchSingleTop = true
@@ -1058,28 +1186,28 @@ fun TripsScreenPreview() {
 @Composable
 fun ProfileScreenWrapper() {
     var isLoggedIn by remember { mutableStateOf(false) }
-    var userEmail by remember { mutableStateOf("") }
+    var currentUser by remember { mutableStateOf<User?>(null) }
 
-    if (isLoggedIn) {
+    if (isLoggedIn && currentUser != null) {
         ProfileScreen(
-            email = userEmail,
+            email = currentUser!!.email,
             onLogout = {
                 isLoggedIn = false
-                userEmail = ""
+                currentUser = null
             }
         )
     } else {
         LoginScreen(
-            onLogin = { email ->
+            onLogin = { user -> // Now takes User object
                 isLoggedIn = true
-                userEmail = email
+                currentUser = user
             }
         )
     }
 }
 
 @Composable
-fun LoginScreen(onLogin: (String) -> Unit) {
+fun LoginScreen(onLogin: (User) -> Unit) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -1090,8 +1218,15 @@ fun LoginScreen(onLogin: (String) -> Unit) {
     LaunchedEffect(authViewModel.authState.value) {
         when (val state = authViewModel.authState.value) {
             is AuthViewModel.AuthState.Success -> {
-                onLogin(state.email)
-                Toast.makeText(context, "Registration successful!", Toast.LENGTH_SHORT).show()
+                // Create a user object with the returned ID
+                val user = User(
+                    id = state.id,
+                    name = name,
+                    email = email,
+                    password = password
+                )
+                onLogin(user)
+                Toast.makeText(context, "Success!", Toast.LENGTH_SHORT).show()
             }
             is AuthViewModel.AuthState.Error -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()

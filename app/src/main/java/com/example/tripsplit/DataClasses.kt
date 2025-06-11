@@ -33,3 +33,8 @@ data class Group(
     val members: List<Int>,
     val expenses: List<Int> = emptyList()
 )
+
+data class CreateUserResponse(
+    val id: Int,
+    val success: Boolean
+)
