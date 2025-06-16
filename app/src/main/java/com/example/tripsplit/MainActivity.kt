@@ -1,4 +1,5 @@
 package com.example.tripsplit
+import org.json.JSONObject
 
 import android.R.attr.data
 import android.content.Context
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.CoroutineScope
@@ -71,7 +73,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.security.cert.X509Certificate
@@ -181,7 +185,52 @@ data class TripEvent(
     val endDate: LocalDate,
     val color: Color
 )
+object AuthStateManager {
+    private const val PREFS_NAME = "auth_prefs"
+    private const val KEY_TOKEN = "auth_token"
+    private const val KEY_USER_ID = "user_id"
+    private const val KEY_USER_EMAIL = "user_email"
+    private const val KEY_USER_NAME = "user_name"
 
+    fun saveAuthState(context: Context, token: String, userId: Int, email: String, name: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(KEY_TOKEN, token)
+            .putInt(KEY_USER_ID, userId)
+            .putString(KEY_USER_EMAIL, email)
+            .putString(KEY_USER_NAME, name)
+            .apply()
+    }
+
+    fun getToken(context: Context): String? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_TOKEN, null)
+    }
+
+    fun getUserId(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_USER_ID, 0)
+    }
+
+    fun getUserEmail(context: Context): String? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_USER_EMAIL, null)
+    }
+
+    fun getUserName(context: Context): String? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_USER_NAME, null)
+    }
+
+    fun clearAuthState(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().apply()
+    }
+
+    fun isLoggedIn(context: Context): Boolean {
+        return getToken(context) != null
+    }
+}
 // next activity jako takie pojedyńcze to do?
 val tripList = listOf(
     Trip("1", "Summer Europe Trip", "Jul 15 - Aug 2", "Flight booking", 0.4f, R.drawable.europe),
@@ -228,43 +277,74 @@ class AuthViewModel : ViewModel() {
     sealed class AuthState {
         object Idle : AuthState()
         object Loading : AuthState()
-        data class Success(val id: Int) : AuthState()
+        data class Success(val token: String, val email: String, val name: String) : AuthState()
         data class Error(val message: String) : AuthState()
     }
 
     private val _authState = mutableStateOf<AuthState>(AuthState.Idle)
     val authState: State<AuthState> = _authState
 
-    fun registerUser(name: String, email: String, password: String) {
+    // Add function to fetch user ID (you'll need to implement this endpoint)
+    private suspend fun fetchUserId(token: String, email: String): Int {
+        // This is a placeholder - implement your actual user ID endpoint
+        return 1 // For demo purposes
+    }
+
+    fun registerUser(context: Context, name: String, email: String, password: String) {
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
-                val response = NetworkClient.apiService.createUser(
-                    UserRegistration(name, email, password)
+                val response = NetworkClient.apiService.register(
+                    AuthRequest(name = name, email = email, password = password)
                 )
-
-                if (response.isSuccessful) {
-                    // Handle successful registration without ID
-                    // For now, we'll use a dummy ID - in real app, fetch user
-                    _authState.value = AuthState.Success(1)
-                } else {
-                    val errorBody = response.errorBody()?.string() ?: "Unknown error"
-                    _authState.value = AuthState.Error("Registration failed: $errorBody")
-                }
+                handleAuthResponse(context, response, name, email)
             } catch (e: Exception) {
                 _authState.value = AuthState.Error("Network error: ${e.message}")
             }
         }
     }
-    fun loginUser(email: String, password: String) {
-        // Implement login logic
+
+    fun loginUser(context: Context, name: String, email: String, password: String) {
+        viewModelScope.launch {
+            _authState.value = AuthState.Loading
+            try {
+                val response = NetworkClient.apiService.login(
+                    AuthRequest(name = name, email = email, password = password)
+                )
+                handleAuthResponse(context, response, name, email)
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("Network error: ${e.message}")
+            }
+        }
     }
 
-    private fun parseUserIdFromResponse(responseText: String): Int? {
-        // Parse response like: "User created succesfully: User { id: 0, ... }"
-        val regex = Regex("""id: (\d+)""")
-        val match = regex.find(responseText)
-        return match?.groupValues?.get(1)?.toIntOrNull()
+    private suspend fun handleAuthResponse(
+        context: Context,
+        response: Response<ResponseBody>,
+        name: String,
+        email: String
+    ) {
+        if (response.isSuccessful) {
+            val token = response.body()?.string()?.trim() ?: ""
+            if (token.isNotEmpty()) {
+                // Fetch user ID - you need to implement this API endpoint
+                val userId = fetchUserId(token, email)
+
+                // Save authentication state
+                AuthStateManager.saveAuthState(context, token, userId, email, name)
+
+                _authState.value = AuthState.Success(token, email, name)
+            } else {
+                _authState.value = AuthState.Error("Authentication failed: Empty token")
+            }
+        } else {
+            val errorBody = try {
+                response.errorBody()?.string() ?: "Unknown error"
+            } catch (e: Exception) {
+                "Failed to read error response"
+            }
+            _authState.value = AuthState.Error("Authentication failed: ${response.code()} - $errorBody")
+        }
     }
 }
 
@@ -281,14 +361,10 @@ class GroupViewModel : ViewModel() {
         data class Error(val message: String) : CreateGroupState()
     }
 
-    init {
-        loadUsers()
-    }
-
-    fun loadUsers() {
+    fun loadUsers(apiKey: String) {
         viewModelScope.launch {
             try {
-                val response = apiService.getUsers()
+                val response = apiService.getUsers(apiKey)
                 if (response.isSuccessful) {
                     users.clear()
                     users.addAll(response.body() ?: emptyList())
@@ -301,11 +377,15 @@ class GroupViewModel : ViewModel() {
         }
     }
 
-    fun createGroup(name: String, ownerId: Int) {
+    fun createGroup(name: String, ownerId: Int, apiKey: String) {
         viewModelScope.launch {
             createGroupState.value = CreateGroupState.Loading
             try {
-                val response = apiService.createGroup(GroupRequest(name, ownerId))
+                val response = apiService.createGroup(
+                    GroupRequest(name, ownerId),
+                    apiKey
+                )
+
                 if (response.isSuccessful) {
                     createGroupState.value = CreateGroupState.Success("Group created successfully!")
                 } else {
@@ -335,17 +415,23 @@ class MainActivity : ComponentActivity() {
 fun MyTripsScreen(
     navController: NavController,
     userId: Int,
-    tripsViewModel: TripsViewModel = viewModel()
+    apiKey: String,
+    tripsViewModel: TripsViewModel = viewModel(),
+    groupViewModel: GroupViewModel = viewModel()
 ) {
     var showJoinDialog by remember { mutableStateOf(false) }
     var showCreateGroupDialog by remember { mutableStateOf(false) }
-    val groupViewModel: GroupViewModel = viewModel()
     val context = LocalContext.current
 
-    // Load trips when screen appears or userId changes
-    LaunchedEffect(userId) {
-        if (userId != 0) { // Only load if we have a valid user ID
-            tripsViewModel.loadUserTrips(userId)
+    // Load users when screen appears or API key changes
+    LaunchedEffect(apiKey) {
+        groupViewModel.loadUsers(apiKey)
+    }
+
+    // Load trips when screen appears or userId/apiKey changes
+    LaunchedEffect(userId, apiKey) {
+        if (userId != 0 && apiKey.isNotEmpty()) {
+            tripsViewModel.loadUserTrips(userId, apiKey)
         }
     }
 
@@ -355,7 +441,7 @@ fun MyTripsScreen(
             is GroupViewModel.CreateGroupState.Success -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
                 showCreateGroupDialog = false
-                tripsViewModel.loadUserTrips(userId) // Refresh trips
+                tripsViewModel.loadUserTrips(userId, apiKey) // Refresh trips
                 groupViewModel.createGroupState.value = GroupViewModel.CreateGroupState.Idle
             }
             is GroupViewModel.CreateGroupState.Error -> {
@@ -386,6 +472,7 @@ fun MyTripsScreen(
             )
 
             Row {
+                // Create Group button
                 IconButton(
                     onClick = { showCreateGroupDialog = true },
                     modifier = Modifier.size(40.dp)
@@ -398,6 +485,7 @@ fun MyTripsScreen(
                     )
                 }
 
+                // Join Trip button
                 IconButton(
                     onClick = { showJoinDialog = true },
                     modifier = Modifier.size(40.dp)
@@ -490,7 +578,7 @@ fun MyTripsScreen(
                 onCodeEntered = { code ->
                     showJoinDialog = false
                     Log.d("JoinCode", "Entered code: $code")
-                    tripsViewModel.loadUserTrips(userId) // Refresh trips
+                    tripsViewModel.loadUserTrips(userId, apiKey) // Refresh trips
                 }
             )
         }
@@ -500,7 +588,7 @@ fun MyTripsScreen(
                 users = groupViewModel.users,
                 onDismiss = { showCreateGroupDialog = false },
                 onCreate = { name, ownerId ->
-                    groupViewModel.createGroup(name, ownerId)
+                    groupViewModel.createGroup(name, ownerId, apiKey)
                 },
                 isLoading = groupViewModel.createGroupState.value is GroupViewModel.CreateGroupState.Loading
             )
@@ -736,45 +824,28 @@ fun TripItem(tripName: String, onTripClick: (String) -> Unit) {
         }
     }
 }
-
 @Composable
 fun TripsApp() {
     val navController = rememberNavController()
-    val authViewModel: AuthViewModel = viewModel()
-    val currentUser = remember { mutableStateOf<User?>(null) }
-
-    // Handle auth state
-    LaunchedEffect(authViewModel.authState.value) {
-        when (val state = authViewModel.authState.value) {
-            is AuthViewModel.AuthState.Success -> {
-                // For demo, create a user object - in real app, fetch user details
-                currentUser.value = User(
-                    id = state.id,
-                    name = "User ${state.id}",
-                    email = "user${state.id}@example.com",
-                    password = ""
-                )
-            }
-            else -> {}
-        }
-    }
+    val context = LocalContext.current
+    val isLoggedIn = remember { mutableStateOf(AuthStateManager.isLoggedIn(context)) }
 
     Scaffold(
         bottomBar = { BottomNavBar(navController) }
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = if (currentUser.value != null) "my_trips" else "login",
+            startDestination = if (isLoggedIn.value) "my_trips" else "login",
             modifier = Modifier.padding(innerPadding)
         ) {
             composable("my_trips") {
-                if (currentUser.value != null) {
+                if (isLoggedIn.value) {
                     MyTripsScreen(
                         navController = navController,
-                        userId = currentUser.value!!.id
+                        userId = AuthStateManager.getUserId(context),
+                        apiKey = AuthStateManager.getToken(context) ?: ""
                     )
                 } else {
-                    // Redirect to login if no user
                     LaunchedEffect(Unit) {
                         navController.navigate("login") {
                             popUpTo("my_trips") { inclusive = true }
@@ -784,16 +855,15 @@ fun TripsApp() {
             }
             composable("calendar") { CalendarScreen(emptyList()) }
             composable("my_profile") {
-                if (currentUser.value != null) {
-                    ProfileScreenWrapper()
-                } else {
-                    // Redirect to login
-                    LaunchedEffect(Unit) {
+                ProfileScreenWrapper(
+                    onLogout = {
+                        isLoggedIn.value = false
                         navController.navigate("login") {
                             popUpTo("my_profile") { inclusive = true }
                         }
-                    }
-                }
+                    },
+                    context = context
+                )
             }
             composable("this_trip/{tripId}") { backStackEntry ->
                 val tripId = backStackEntry.arguments?.getString("tripId")
@@ -801,18 +871,18 @@ fun TripsApp() {
             }
             composable("login") {
                 LoginScreen(
-                    onLogin = { user ->
-                        currentUser.value = user
+                    onLoginSuccess = {
+                        isLoggedIn.value = true
                         navController.navigate("my_trips") {
                             popUpTo("login") { inclusive = true }
                         }
-                    }
+                    },
+                    context = context
                 )
             }
         }
     }
 }
-
 
 @Composable
 fun BottomNavBar(navController: NavHostController) {
@@ -849,10 +919,15 @@ fun BottomNavBar(navController: NavHostController) {
                 onClick = {
                     if (currentRoute != item.route) {
                         navController.navigate(item.route) {
-                            popUpTo("my_trips") {
+                            // Pop up to the start destination of the graph to
+                            // avoid building up a large stack of destinations
+                            popUpTo(navController.graph.findStartDestination().id) {
                                 saveState = true
                             }
+                            // Avoid multiple copies of the same destination when
+                            // reselecting the same item
                             launchSingleTop = true
+                            // Restore state when reselecting a previously selected item
                             restoreState = true
                         }
                     }
@@ -1182,51 +1257,47 @@ fun TripsScreenPreview() {
 }
 
 
-
 @Composable
-fun ProfileScreenWrapper() {
-    var isLoggedIn by remember { mutableStateOf(false) }
-    var currentUser by remember { mutableStateOf<User?>(null) }
+fun ProfileScreenWrapper(
+    onLogout: () -> Unit,
+    context: Context = LocalContext.current
+) {
+    val token = remember { AuthStateManager.getToken(context) }
+    val userEmail = remember { AuthStateManager.getUserEmail(context) }
+    val userName = remember { AuthStateManager.getUserName(context) }
 
-    if (isLoggedIn && currentUser != null) {
+    if (token != null && userEmail != null) {
         ProfileScreen(
-            email = currentUser!!.email,
+            email = userEmail,
+            name = userName ?: "User",
             onLogout = {
-                isLoggedIn = false
-                currentUser = null
+                AuthStateManager.clearAuthState(context)
+                onLogout()
             }
         )
     } else {
         LoginScreen(
-            onLogin = { user -> // Now takes User object
-                isLoggedIn = true
-                currentUser = user
-            }
+            onLoginSuccess = onLogout, // After login, we want to show profile
+            context = context
         )
     }
 }
 
 @Composable
-fun LoginScreen(onLogin: (User) -> Unit) {
+fun LoginScreen(
+    onLoginSuccess: () -> Unit,
+    context: Context = LocalContext.current
+) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isRegistering by remember { mutableStateOf(false) }
     val authViewModel: AuthViewModel = viewModel()
-    val context = LocalContext.current
 
     LaunchedEffect(authViewModel.authState.value) {
         when (val state = authViewModel.authState.value) {
             is AuthViewModel.AuthState.Success -> {
-                // Create a user object with the returned ID
-                val user = User(
-                    id = state.id,
-                    name = name,
-                    email = email,
-                    password = password
-                )
-                onLogin(user)
-                Toast.makeText(context, "Success!", Toast.LENGTH_SHORT).show()
+                onLoginSuccess()
             }
             is AuthViewModel.AuthState.Error -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
@@ -1248,15 +1319,13 @@ fun LoginScreen(onLogin: (User) -> Unit) {
             modifier = Modifier.padding(bottom = 24.dp)
         )
 
-        if (isRegistering) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Name") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-        }
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Name") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
             value = email,
@@ -1282,13 +1351,9 @@ fun LoginScreen(onLogin: (User) -> Unit) {
         Button(
             onClick = {
                 if (isRegistering) {
-                    if (name.isBlank() || email.isBlank() || password.isBlank()) {
-                        Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-                    authViewModel.registerUser(name, email, password)
+                    authViewModel.registerUser(context, name, email, password)
                 } else {
-                    // Handle login
+                    authViewModel.loginUser(context, name, email, password)
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -1352,7 +1417,11 @@ fun LoginScreen(onLogin: (User) -> Unit) {
 //}
 
 @Composable
-fun ProfileScreen(email: String, onLogout: () -> Unit) {
+fun ProfileScreen(
+    email: String,
+    name: String,
+    onLogout: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1386,7 +1455,7 @@ fun ProfileScreen(email: String, onLogout: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Ed Wood",
+            text = name,
             style = MaterialTheme.typography.h4,
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
@@ -1430,7 +1499,6 @@ fun ProfileScreen(email: String, onLogout: () -> Unit) {
         }
     }
 }
-
 @Composable
 fun ProfileOptionItem(icon: Int, text: String) {
     Row(
@@ -1466,12 +1534,44 @@ fun ProfileOption(optionText: String) {
     }
 }
 
-
 @Preview(showBackground = true)
 @Composable
 fun ProfileScreenPreview() {
-    ProfileScreenWrapper()
+    // Create a dummy context for preview
+    val context = LocalContext.current
+
+    // Create a mock SharedPreferences for preview
+    val mockPrefs = context.getSharedPreferences("mock_prefs", Context.MODE_PRIVATE)
+    mockPrefs.edit()
+        .putString("auth_token", "dummy_token")
+        .putInt("user_id", 1)
+        .putString("user_email", "user@example.com")
+        .putString("user_name", "John Doe")
+        .apply()
+
+    ProfileScreenWrapper(
+        onLogout = {},
+        context = context
+    )
 }
+
+@Preview(showBackground = true)
+@Composable
+fun ProfileScreenLoggedOutPreview() {
+    // Create a dummy context for preview
+    val context = LocalContext.current
+
+    // Clear any mock preferences
+    val mockPrefs = context.getSharedPreferences("mock_prefs", Context.MODE_PRIVATE)
+    mockPrefs.edit().clear().apply()
+
+    ProfileScreenWrapper(
+        onLogout = {},
+        context = context
+    )
+}
+
+
 @Composable
 fun TripProgressBar(progress: Float) {
     LinearProgressIndicator(
@@ -1737,5 +1837,7 @@ fun DayCell(
 
         }
     }
+
+
 }
 

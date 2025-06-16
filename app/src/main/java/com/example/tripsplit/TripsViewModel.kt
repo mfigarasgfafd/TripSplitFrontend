@@ -17,8 +17,7 @@ class TripsViewModel : ViewModel() {
     val isLoading = mutableStateOf(false)
     val errorState = mutableStateOf<String?>(null)
 
-    fun loadUserTrips(userId: Int) {
-        // Don't reload if already loading
+    fun loadUserTrips(userId: Int, apiKey: String) {
         if (isLoading.value) return
 
         viewModelScope.launch {
@@ -28,8 +27,8 @@ class TripsViewModel : ViewModel() {
             try {
                 trips.clear()
 
-                // 1. Fetch groups from backend
-                val groupsResponse = apiService.getAllGroups()
+                // Fetch groups from backend
+                val groupsResponse = apiService.getGroups(apiKey)
                 if (groupsResponse.isSuccessful) {
                     val groups = groupsResponse.body() ?: emptyList()
 
