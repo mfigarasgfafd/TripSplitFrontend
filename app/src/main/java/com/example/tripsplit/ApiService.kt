@@ -20,10 +20,12 @@ interface ApiService {
 
     // Group endpoints
     @POST("group/create_group")
+    @Headers("Accept: text/plain")
     suspend fun createGroup(
-        @Body group: GroupRequest,
-        @Header("todo_apikey") apiKey: String
-    ): Response<Void>
+        @Header("todo_apikey") apiKey: String,
+        @Body request: CreateGroupRequest
+    ): Response<ResponseBody>
+
 
     @GET("group/get_groups")
     suspend fun getGroups(
@@ -36,7 +38,23 @@ interface ApiService {
         @Header("todo_apikey") apiKey: String
     ): Response<List<User>>
 
+    @GET("group/get_group/{id}")
+    suspend fun getGroupDetails(
+        @Header("todo_apikey") apiKey: String,
+        @Path("id") id: Int
+    ): Response<Group>
 
+    @POST("group/get_user_groups")
+    suspend fun getUserGroups(
+        @Header("todo_apikey") apiKey: String
+    ): Response<List<Group>>
+
+    @POST("group/join_group")
+    @Headers("Accept: text/plain")
+    suspend fun joinGroup(
+        @Header("todo_apikey") apiKey: String,
+        @Body request: JoinGroupRequest
+    ): Response<ResponseBody>
 
 //    // New endpoints for groups
 //    @GET("user/get_users")
@@ -51,4 +69,17 @@ interface ApiService {
 //
 //    @GET("group/get_group/{id}")
 //    suspend fun getGroup(@Path("id") id: Int): Response<Group>
+@POST("group/add_expense")
+@Headers("Accept: text/plain")
+suspend fun addExpense(
+    @Header("todo_apikey") apiKey: String,
+    @Body request: AddExpenseRequest
+): Response<ResponseBody>
+
+    @POST("group/calculate")
+    suspend fun calculateGroup(
+        @Header("todo_apikey") apiKey: String,
+        @Body request: CalculateRequest
+    ): Response<GroupCalculationResult>
+
 }

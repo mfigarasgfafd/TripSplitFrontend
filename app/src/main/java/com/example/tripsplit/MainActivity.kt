@@ -1,6 +1,13 @@
 package com.example.tripsplit
 import org.json.JSONObject
-
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerState
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberDatePickerState
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import android.R.attr.data
 import android.content.Context
 import android.os.Bundle
@@ -43,6 +50,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -54,6 +62,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateListOf
@@ -63,10 +73,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,10 +92,13 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.security.cert.X509Certificate
-import java.time.LocalDate
+import java.text.SimpleDateFormat
+//import java.time.LocalDate
 import java.time.Year
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
+//import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
 import javax.net.ssl.SSLContext
@@ -250,6 +266,77 @@ fun String.toLocalDate(): LocalDate {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DatePickerDialog(
+    onDismissRequest: () -> Unit,
+    onDateSelected: (LocalDate) -> Unit,
+    initialDate: LocalDate = LocalDate.now()
+) {
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = initialDate
+            .atStartOfDay(ZoneOffset.UTC)  // Use UTC timezone
+            .toInstant()
+            .toEpochMilli()
+    )
+
+    Dialog(onDismissRequest = onDismissRequest) {
+        Card(
+            modifier = Modifier
+                .wrapContentSize()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            elevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                DatePicker(
+                    state = datePickerState,
+                    modifier = Modifier.wrapContentWidth(),
+                    title = {
+                        Text(
+                            "Select date",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.h6
+                        )
+                    }
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismissRequest) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            datePickerState.selectedDateMillis?.let { millis ->
+                                val date = Instant.ofEpochMilli(millis)
+                                    .atZone(ZoneOffset.UTC)  // UTC timezone
+                                    .toLocalDate()
+                                onDateSelected(date)
+                            }
+                            onDismissRequest()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = PrimaryColor,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("OK")
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 fun parseDateRange(dateRange: String): Pair<LocalDate, LocalDate> {
     val parts = dateRange.split(" - ")
@@ -353,12 +440,20 @@ class GroupViewModel : ViewModel() {
 
     val users = mutableStateListOf<User>()
     val createGroupState = mutableStateOf<CreateGroupState>(CreateGroupState.Idle)
+    val joinGroupState = mutableStateOf<JoinGroupState>(JoinGroupState.Idle)
 
     sealed class CreateGroupState {
         object Idle : CreateGroupState()
         object Loading : CreateGroupState()
         data class Success(val message: String) : CreateGroupState()
         data class Error(val message: String) : CreateGroupState()
+    }
+
+    sealed class JoinGroupState {
+        object Idle : JoinGroupState()
+        object Loading : JoinGroupState()
+        data class Success(val message: String) : JoinGroupState()
+        data class Error(val message: String) : JoinGroupState()
     }
 
     fun loadUsers(apiKey: String) {
@@ -376,27 +471,154 @@ class GroupViewModel : ViewModel() {
             }
         }
     }
+    suspend fun getGroupDetails(apiKey: String, groupId: Int): Group? {
+        return try {
+            val response = apiService.getUserGroups(apiKey)
+            if (response.isSuccessful) {
+                response.body()?.find { it.id == groupId }
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+    private val _expenses = mutableStateListOf<Expense>()
+    val expenses: List<Expense> = _expenses
 
-    fun createGroup(name: String, ownerId: Int, apiKey: String) {
+    private val _transactions = mutableStateListOf<Transaction>()
+    val transactions: List<Transaction> = _transactions
+
+    private val _totalSpent = mutableStateOf(0.0)
+    val totalSpent: State<Double> = _totalSpent
+
+    private val _isCalculating = mutableStateOf(false)
+    val isCalculating: State<Boolean> = _isCalculating
+
+    private val _addExpenseState = mutableStateOf<AddExpenseState>(AddExpenseState.Idle)
+    val addExpenseState: State<AddExpenseState> = _addExpenseState
+
+    sealed class AddExpenseState {
+        object Idle : AddExpenseState()
+        object Loading : AddExpenseState()
+        data class Success(val message: String) : AddExpenseState()
+        data class Error(val message: String) : AddExpenseState()
+    }
+
+    suspend fun calculateGroup(apiKey: String, groupId: Int) {
+        _isCalculating.value = true
+        try {
+            val response = apiService.calculateGroup(apiKey, CalculateRequest(groupId))
+            if (response.isSuccessful) {
+                val result = response.body()
+                if (result != null) {
+                    _expenses.clear()
+                    _expenses.addAll(result.expenses)
+                    _transactions.clear()
+                    _transactions.addAll(result.transactions)
+                    _totalSpent.value = result.totalSpent
+                }
+            } else {
+                Log.e("GroupViewModel", "Calculate error: ${response.errorBody()?.string()}")
+            }
+        } catch (e: Exception) {
+            Log.e("GroupViewModel", "Calculate error", e)
+        } finally {
+            _isCalculating.value = false
+        }
+    }
+
+    fun addExpense(apiKey: String, groupId: Int, expense: Expense) {
+        viewModelScope.launch {
+            _addExpenseState.value = AddExpenseState.Loading
+            try {
+                val request = AddExpenseRequest(expense, groupId)
+                val response = apiService.addExpense(apiKey, request)
+
+                if (response.isSuccessful) {
+                    _addExpenseState.value = AddExpenseState.Success("Expense added successfully")
+                } else {
+                    val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                    _addExpenseState.value = AddExpenseState.Error("Failed to add expense: $errorBody")
+                }
+            } catch (e: Exception) {
+                _addExpenseState.value = AddExpenseState.Error("Network error: ${e.message}")
+            }
+        }
+    }
+
+
+    fun createGroup(
+        apiKey: String,
+        name: String,
+        description: String? = null,
+        location: String? = null,
+        startDate: String? = null,
+        endDate: String? = null
+    ) {
         viewModelScope.launch {
             createGroupState.value = CreateGroupState.Loading
             try {
-                val response = apiService.createGroup(
-                    GroupRequest(name, ownerId),
-                    apiKey
+                val request = CreateGroupRequest(
+                    name = name,
+                    description = description,
+                    location = location,
+                    groupStartDate = startDate,
+                    groupEndDate = endDate
                 )
 
+                val response = apiService.createGroup(apiKey, request)
+
                 if (response.isSuccessful) {
-                    createGroupState.value = CreateGroupState.Success("Group created successfully!")
+                    // Handle both possible responses: JSON or plain text
+                    val responseBody = response.body()?.string() ?: ""
+                    if (responseBody.startsWith("Group created")) {
+                        // This is the success text response
+                        createGroupState.value = CreateGroupState.Success("Group created successfully")
+                    } else {
+                        try {
+                            // Try to parse as JSON
+                            val group = Gson().fromJson(responseBody, Group::class.java)
+                            createGroupState.value = CreateGroupState.Success("Group created: ${group.name}")
+                        } catch (e: Exception) {
+                            // Fallback to text response
+                            createGroupState.value = CreateGroupState.Success(responseBody)
+                        }
+                    }
                 } else {
-                    val error = response.errorBody()?.string() ?: "Unknown error"
-                    createGroupState.value = CreateGroupState.Error("Failed to create group: $error")
+                    // Handle error responses
+                    val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                    createGroupState.value = CreateGroupState.Error("Failed to create group: $errorBody")
                 }
             } catch (e: Exception) {
                 createGroupState.value = CreateGroupState.Error("Network error: ${e.message}")
             }
         }
     }
+
+    fun joinGroup(apiKey: String, groupId: Int) {
+        viewModelScope.launch {
+            joinGroupState.value = JoinGroupState.Loading
+            try {
+                val response = apiService.joinGroup(apiKey, JoinGroupRequest(groupId))
+                if (response.isSuccessful) {
+                    // API returns a boolean value
+                    val success = response.body()?.string().toBoolean()
+                    if (success) {
+                        joinGroupState.value = JoinGroupState.Success("Successfully joined group")
+                    } else {
+                        joinGroupState.value = JoinGroupState.Error("Failed to join group")
+                    }
+                } else {
+                    val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                    joinGroupState.value = JoinGroupState.Error("Failed to join group: $errorBody")
+                }
+            } catch (e: Exception) {
+                joinGroupState.value = JoinGroupState.Error("Network error: ${e.message}")
+            }
+        }
+    }
+
 }
 
 
@@ -423,30 +645,49 @@ fun MyTripsScreen(
     var showCreateGroupDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
+
     // Load users when screen appears or API key changes
     LaunchedEffect(apiKey) {
         groupViewModel.loadUsers(apiKey)
     }
 
+
     // Load trips when screen appears or userId/apiKey changes
-    LaunchedEffect(userId, apiKey) {
-        if (userId != 0 && apiKey.isNotEmpty()) {
-            tripsViewModel.loadUserTrips(userId, apiKey)
+    LaunchedEffect(apiKey) {
+        if (apiKey.isNotEmpty()) {
+            tripsViewModel.loadUserTrips(apiKey) // Only pass apiKey
         }
     }
 
-    // Handle create group state changes
+
+
     LaunchedEffect(groupViewModel.createGroupState.value) {
         when (val state = groupViewModel.createGroupState.value) {
             is GroupViewModel.CreateGroupState.Success -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
                 showCreateGroupDialog = false
-                tripsViewModel.loadUserTrips(userId, apiKey) // Refresh trips
+                tripsViewModel.loadUserTrips(apiKey) // Refresh trips
                 groupViewModel.createGroupState.value = GroupViewModel.CreateGroupState.Idle
             }
+
             is GroupViewModel.CreateGroupState.Error -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
                 groupViewModel.createGroupState.value = GroupViewModel.CreateGroupState.Idle
+            }
+
+            else -> {}
+        }
+    }
+    LaunchedEffect(groupViewModel.joinGroupState.value) {
+        when (val state = groupViewModel.joinGroupState.value) {
+            is GroupViewModel.JoinGroupState.Success -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
+                tripsViewModel.loadUserTrips(apiKey) // Refresh trips
+                groupViewModel.joinGroupState.value = GroupViewModel.JoinGroupState.Idle
+            }
+            is GroupViewModel.JoinGroupState.Error -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
+                groupViewModel.joinGroupState.value = GroupViewModel.JoinGroupState.Idle
             }
             else -> {}
         }
@@ -577,18 +818,28 @@ fun MyTripsScreen(
                 onDismiss = { showJoinDialog = false },
                 onCodeEntered = { code ->
                     showJoinDialog = false
-                    Log.d("JoinCode", "Entered code: $code")
-                    tripsViewModel.loadUserTrips(userId, apiKey) // Refresh trips
+                    try {
+                        val groupId = code.toInt()
+                        groupViewModel.joinGroup(apiKey, groupId)
+                    } catch (e: NumberFormatException) {
+                        Toast.makeText(context, "Invalid group code", Toast.LENGTH_LONG).show()
+                    }
                 }
             )
         }
 
         if (showCreateGroupDialog) {
             CreateGroupDialog(
-                users = groupViewModel.users,
                 onDismiss = { showCreateGroupDialog = false },
-                onCreate = { name, ownerId ->
-                    groupViewModel.createGroup(name, ownerId, apiKey)
+                onCreate = { name, description, location, startDate, endDate ->
+                    groupViewModel.createGroup(
+                        apiKey = apiKey,
+                        name = name,
+                        description = description,
+                        location = location,
+                        startDate = startDate,
+                        endDate = endDate
+                    )
                 },
                 isLoading = groupViewModel.createGroupState.value is GroupViewModel.CreateGroupState.Loading
             )
@@ -652,52 +903,123 @@ fun TripCard(trip: Trip, onTripClick: (String) -> Unit) {
 
 @Composable
 fun CreateGroupDialog(
-    users: List<User>,
     onDismiss: () -> Unit,
-    onCreate: (String, Int) -> Unit,
+    onCreate: (String, String, String, String, String) -> Unit,
     isLoading: Boolean
 ) {
     var groupName by remember { mutableStateOf("") }
-    var selectedOwnerId by remember { mutableStateOf(-1) }
+    var description by remember { mutableStateOf("") }
+    var location by remember { mutableStateOf("") }
+
+    // State for dates
+    var startDate by remember { mutableStateOf<LocalDate?>(null) }
+    var endDate by remember { mutableStateOf<LocalDate?>(null) }
+
+    // State for date picker visibility
+    var showStartDatePicker by remember { mutableStateOf(false) }
+    var showEndDatePicker by remember { mutableStateOf(false) }
+
+    // Date formatters
+    val displayFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
+    val backendFormatter = DateTimeFormatter.ISO_INSTANT
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Create New Group", color = PrimaryColor) },
         text = {
             Column {
+                // Group Name
                 TextField(
                     value = groupName,
                     onValueChange = { groupName = it },
-                    label = { Text("Group Name") },
+                    label = { Text("Group Name*") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Description
+                TextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Location
+                TextField(
+                    value = location,
+                    onValueChange = { location = it },
+                    label = { Text("Location") },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isLoading
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text("Select Owner:", style = MaterialTheme.typography.body1)
+                // Start Date Picker
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Start Date:", style = MaterialTheme.typography.body1)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = startDate?.format(displayFormatter) ?: "Not selected",
+                        style = MaterialTheme.typography.body1,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = { showStartDatePicker = true },
+                        enabled = !isLoading,
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = PrimaryColor,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("Select")
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                LazyColumn(modifier = Modifier.height(200.dp)) {
-                    items(users) { user ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedOwnerId = user.id }
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedOwnerId == user.id,
-                                onClick = { selectedOwnerId = user.id }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(user.name, style = MaterialTheme.typography.body1)
-                                Text(user.email, style = MaterialTheme.typography.caption)
-                            }
-                        }
+                // End Date Picker
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("End Date:", style = MaterialTheme.typography.body1)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = endDate?.format(displayFormatter) ?: "Not selected",
+                        style = MaterialTheme.typography.body1,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = { showEndDatePicker = true },
+                        enabled = !isLoading,
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = PrimaryColor,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("Select")
+                    }
+                }
+
+                // Date validation
+                if (startDate != null && endDate != null) {
+                    if (startDate!!.isAfter(endDate)) {
+                        Text(
+                            "End date must be after start date",
+                            color = Color.Red,
+                            style = MaterialTheme.typography.caption,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    } else {
+                        Text(
+                            "Duration: ${ChronoUnit.DAYS.between(startDate, endDate) + 1} days",
+                            style = MaterialTheme.typography.caption,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                 }
             }
@@ -705,12 +1027,19 @@ fun CreateGroupDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (groupName.isNotBlank() && selectedOwnerId != -1) {
-                        onCreate(groupName, selectedOwnerId)
-                    }
+                    val formattedStart = startDate?.atStartOfDay(ZoneOffset.UTC)?.format(backendFormatter) ?: ""
+                    val formattedEnd = endDate?.atStartOfDay(ZoneOffset.UTC)?.format(backendFormatter) ?: ""
+                    onCreate(groupName, description, location, formattedStart, formattedEnd)
                 },
-                enabled = !isLoading && groupName.isNotBlank() && selectedOwnerId != -1,
-                colors = ButtonDefaults.buttonColors(backgroundColor = PrimaryColor)
+                enabled = !isLoading &&
+                        groupName.isNotBlank() &&
+                        startDate != null &&
+                        endDate != null &&
+                        (startDate!!.isBefore(endDate) || startDate!!.isEqual(endDate)),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = PrimaryColor,
+                    contentColor = Color.White
+                )
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
@@ -731,8 +1060,34 @@ fun CreateGroupDialog(
             }
         }
     )
-}
 
+    // Date picker dialogs
+    if (showStartDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showStartDatePicker = false },
+            onDateSelected = { date ->
+                startDate = date
+                showStartDatePicker = false
+                // Auto-set end date if not set
+                if (endDate == null || date.isAfter(endDate)) {
+                    endDate = date.plusDays(1)
+                }
+            },
+            initialDate = startDate ?: LocalDate.now()
+        )
+    }
+
+    if (showEndDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showEndDatePicker = false },
+            onDateSelected = { date ->
+                endDate = date
+                showEndDatePicker = false
+            },
+            initialDate = endDate ?: (startDate ?: LocalDate.now()).plusDays(1)
+        )
+    }
+}
 
 
 
@@ -866,8 +1221,11 @@ fun TripsApp() {
                 )
             }
             composable("this_trip/{tripId}") { backStackEntry ->
+                val context = LocalContext.current
                 val tripId = backStackEntry.arguments?.getString("tripId")
-                ThisTripScreen(navController, tripId)
+                val apiKey = AuthStateManager.getToken(context) ?: "" // No need for remember
+
+                ThisTripScreen(navController = navController, tripId = tripId, apiKey = apiKey)
             }
             composable("login") {
                 LoginScreen(
@@ -939,119 +1297,322 @@ fun BottomNavBar(navController: NavHostController) {
         }
     }
 }
+
+
 @Composable
-fun ThisTripScreen(
-    navController: NavController,
-    tripName: String?
-) {
-    val trip = tripList.find { it.name == tripName }
-
-    if (trip == null) {
-        LaunchedEffect(Unit) {
-            navController.popBackStack()
-        }
-        return
-    }
-
-    var showExpenseDialog by remember { mutableStateOf(false) }
-    var expenseTitle by remember { mutableStateOf("") }
-    var expenseAmount by remember { mutableStateOf("") }
-    val expenses = remember { mutableStateListOf<Expense>() }
-
-    Column(
+fun ExpenseItem(expense: Expense) {
+    Card(
         modifier = Modifier
-            .fillMaxSize()
-            .background(BackgroundColor)
-            .padding(16.dp)
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        elevation = 2.dp
     ) {
-        // Header with Back and Quit Trip buttons
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    expense.description,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "${"%.2f".format(expense.amount)} PLN",
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryColor
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text("Paid by: User ${expense.payerId}")
+
+            Text(
+                "Participants: ${expense.participantsIds.joinToString(", ") { "User $it" }}",
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Text(
+                "Date: ${expense.date}",
+                style = MaterialTheme.typography.caption,
+                color = Color.Gray
+            )
+        }
+    }
+}
+
+
+@Composable
+fun TransactionItem(transaction: Transaction) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        backgroundColor = Color.LightGray.copy(alpha = 0.1f),
+        elevation = 1.dp
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { navController.popBackStack() }) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = PrimaryColor)
-            }
-            TextButton(onClick = { /* TODO: Handle quit trip */ }) {
-                Text("Quit Trip", color = PrimaryColor)
-            }
-        }
-
-        // Trip Header Section
-        Text(
-            text = trip.name,
-            style = MaterialTheme.typography.h4,
-            color = PrimaryColor,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-
-        // Trip Info Cards
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            elevation = 4.dp
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "📅 ${trip.dateRange}",
+                    text = "User ${transaction.payerId} owes",
                     style = MaterialTheme.typography.body1
                 )
-                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Next Activity: ${trip.nextActivity}",
-                    style = MaterialTheme.typography.body1,
+                    text = "User ${transaction.receiverId}",
                     fontWeight = FontWeight.Bold
                 )
             }
+            Text(
+                text = "${"%.2f".format(transaction.amount)} PLN",
+                fontWeight = FontWeight.Bold,
+                color = PrimaryColor
+            )
         }
+    }
+}
 
-        // People List Section
-        Text(
-            text = "Travel Companions",
-            style = MaterialTheme.typography.h6,
-            color = PrimaryColor,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
+@Composable
+fun ThisTripScreen(
+    navController: NavController,
+    tripId: String?,
+    apiKey: String
+) {
+    val groupViewModel: GroupViewModel = viewModel()
+    val groupState = remember { mutableStateOf<Group?>(null) }
+    val isLoading = remember { mutableStateOf(false) }
+    val errorState = remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
 
-        val people = listOf("Alice", "Bob", "Charlie", "David")
-        Column {
-            people.forEach { person ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    elevation = 2.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+    // Fetch group details when screen opens
+    LaunchedEffect(tripId) {
+        if (tripId != null) {
+            isLoading.value = true
+            try {
+                val group = groupViewModel.getGroupDetails(apiKey, tripId.toInt())
+                if (group != null) {
+                    groupState.value = group
+                    // Calculate expenses and transactions
+                    groupViewModel.calculateGroup(apiKey, tripId.toInt())
+                } else {
+                    errorState.value = "Group not found"
+                }
+            } catch (e: Exception) {
+                errorState.value = "Network error: ${e.message}"
+            } finally {
+                isLoading.value = false
+            }
+        } else {
+            errorState.value = "Invalid trip ID"
+        }
+    }
+
+    // Handle expense state changes
+    LaunchedEffect(groupViewModel.addExpenseState.value) {
+        when (val state = groupViewModel.addExpenseState.value) {
+            is GroupViewModel.AddExpenseState.Success -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
+                // Refresh calculations
+                if (tripId != null) {
+                    groupViewModel.calculateGroup(apiKey, tripId.toInt())
+                }
+            }
+            is GroupViewModel.AddExpenseState.Error -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
+            }
+            else -> {}
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Trip Details") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            when {
+                isLoading.value -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = "Person",
-                            tint = PrimaryColor
-                        )
+                        CircularProgressIndicator()
+                    }
+                }
+
+                errorState.value != null -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                            text = person,
-                            modifier = Modifier.padding(start = 8.dp),
-                            style = MaterialTheme.typography.body1
+                            text = "Error Loading Group",
+                            style = MaterialTheme.typography.h6,
+                            color = Color.Red
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(errorState.value ?: "Unknown error")
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Trip ID: ${tripId ?: "N/A"}")
+                    }
+                }
+
+                groupState.value != null -> {
+                    GroupDetailsContent(
+                        group = groupState.value!!,
+                        expenses = groupViewModel.expenses,
+                        transactions = groupViewModel.transactions,
+                        totalSpent = groupViewModel.totalSpent.value,
+                        onAddExpense = { expense ->
+                            if (tripId != null) {
+                                groupViewModel.addExpense(
+                                    apiKey,
+                                    tripId.toInt(),
+                                    expense
+                                )
+                            }
+                        }
+                    )
+                }
+
+                else -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Group not found", color = Color.Gray)
                     }
                 }
             }
         }
+    }
+}
+
+
+@Composable
+fun GroupDetailsContent(
+    group: Group,
+    expenses: List<Expense>,
+    transactions: List<Transaction>,
+    totalSpent: Double,
+    onAddExpense: (Expense) -> Unit
+) {
+    var showExpenseDialog by remember { mutableStateOf(false) }
+    var expenseTitle by remember { mutableStateOf("") }
+    var expenseAmount by remember { mutableStateOf("") }
+    var selectedPayer by remember { mutableStateOf<Int?>(null) }
+    var selectedParticipants by remember { mutableStateOf<List<Int>>(emptyList()) }
+    val context = LocalContext.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        // Group Header
+        Text(
+            text = group.name ?: "Unnamed Trip",
+            style = MaterialTheme.typography.h4,
+            color = PrimaryColor,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        // Location
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = "Location",
+                tint = PrimaryColor
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = group.location ?: "No location specified",
+                style = MaterialTheme.typography.body1
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Date Range
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.DateRange,
+                contentDescription = "Dates",
+                tint = PrimaryColor
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = formatDateRange(group.groupStartDate, group.groupEndDate),
+                style = MaterialTheme.typography.body1
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Description
+        Text(
+            text = "Description",
+            style = MaterialTheme.typography.h6,
+            color = PrimaryColor
+        )
+        Text(
+            text = group.description ?: "No description available",
+            style = MaterialTheme.typography.body1,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Members section
+        Text(
+            text = "Members",
+            style = MaterialTheme.typography.h6,
+            color = PrimaryColor
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Members list - simplified for now
+        group.membersIds?.forEach { memberId ->
+            Text(
+                text = "User ID: $memberId",
+                style = MaterialTheme.typography.body1,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Expenses Section
-        Spacer(modifier = Modifier.height(16.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Expenses",
+                text = "Expenses (Total: ${"%.2f".format(totalSpent)} PLN)",
                 style = MaterialTheme.typography.h6,
                 color = PrimaryColor
             )
@@ -1066,32 +1627,41 @@ fun ThisTripScreen(
             }
         }
 
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(expenses) { expense ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    elevation = 2.dp
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .padding(16.dp)
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(text = expense.title, style = MaterialTheme.typography.body1)
-                        Text(
-                            text = "%.2f PLN".format(expense.amount),
-                            style = MaterialTheme.typography.body1,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (expenses.isEmpty()) {
+            Text("No expenses recorded yet", modifier = Modifier.padding(8.dp))
+        } else {
+            LazyColumn {
+                items(expenses) { expense ->
+                    ExpenseItem(expense = expense)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Transactions Section
+        Text(
+            text = "Settlement Transactions",
+            style = MaterialTheme.typography.h6,
+            color = PrimaryColor
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (transactions.isEmpty()) {
+            Text("No transactions needed", modifier = Modifier.padding(8.dp))
+        } else {
+            LazyColumn {
+                items(transactions) { transaction ->
+                    TransactionItem(transaction = transaction)
                 }
             }
         }
     }
 
+    // Expense Dialog
     if (showExpenseDialog) {
         AlertDialog(
             onDismissRequest = { showExpenseDialog = false },
@@ -1101,30 +1671,119 @@ fun ThisTripScreen(
                     TextField(
                         value = expenseTitle,
                         onValueChange = { expenseTitle = it },
-                        label = { Text("Expense Title") },
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        label = { Text("Expense Title*") },
+                        modifier = Modifier.fillMaxWidth()
                     )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     TextField(
                         value = expenseAmount,
                         onValueChange = { expenseAmount = it },
-                        label = { Text("Amount (PLN)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        label = { Text("Amount (PLN)*") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text("Payer:", style = MaterialTheme.typography.subtitle1)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                            .horizontalScroll(rememberScrollState())
+                    ) {
+                        group.membersIds?.forEach { memberId ->
+                            val isSelected = selectedPayer == memberId
+                            Button(
+                                onClick = { selectedPayer = memberId },
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .border(
+                                        width = if (isSelected) 2.dp else 1.dp,
+                                        color = if (isSelected) PrimaryColor else Color.Gray,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ),
+                                colors = ButtonDefaults.buttonColors(
+                                    backgroundColor = if (isSelected) PrimaryColor.copy(alpha = 0.1f) else Color.Transparent,
+                                    contentColor = if (isSelected) PrimaryColor else Color.Black
+                                ),
+                                elevation = ButtonDefaults.elevation(defaultElevation = 0.dp)
+                            ) {
+                                Text("User $memberId")
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text("Participants:", style = MaterialTheme.typography.subtitle1)
+
+                    // Participants selection
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
+                        group.membersIds?.forEach { memberId ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            ) {
+                                Checkbox(
+                                    checked = selectedParticipants.contains(memberId),
+                                    onCheckedChange = { isChecked ->  // Fixed parameter name
+                                        selectedParticipants = if (isChecked) {
+                                            selectedParticipants + memberId
+                                        } else {
+                                            selectedParticipants - memberId
+                                        }
+                                    }
+                                )
+                                Text("User $memberId", modifier = Modifier.padding(start = 8.dp))
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        expenseAmount.toDoubleOrNull()?.let {
-                            expenses.add(Expense(expenseTitle, it))
+                        val amount = expenseAmount.toDoubleOrNull()
+                        if (expenseTitle.isNotBlank() && amount != null && selectedPayer != null && selectedParticipants.isNotEmpty()) {
+                            val newExpense = Expense(
+                                id = 0, // Will be generated by backend
+                                description = expenseTitle,
+                                amount = amount,
+                                payerId = selectedPayer!!,
+                                participantsIds = selectedParticipants,
+                                date = LocalDate.now().toString()
+                            )
+                            onAddExpense(newExpense)
+
+                            // Reset form
                             expenseTitle = ""
                             expenseAmount = ""
+                            selectedPayer = null
+                            selectedParticipants = emptyList()
+
                             showExpenseDialog = false
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Please fill all fields correctly",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(backgroundColor = PrimaryColor)
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = PrimaryColor,
+                        contentColor = Color.White
+                    )
                 ) {
-                    Text("Add", color = Color.White)
+                    Text("Add Expense")
                 }
             },
             dismissButton = {
@@ -1136,10 +1795,33 @@ fun ThisTripScreen(
     }
 }
 
-data class Expense(
-    val title: String,
-    val amount: Double
-)
+private fun formatDateRange(start: String?, end: String?): String {
+    if (start == null || end == null) return "Dates not set"
+
+    return try {
+        // Parse with java.time API (recommended for API 26+)
+        val startDate = LocalDate.parse(start.substringBefore("T"))
+        val endDate = LocalDate.parse(end.substringBefore("T"))
+
+        val formatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
+        "${startDate.format(formatter)} - ${endDate.format(formatter)}"
+    } catch (e: Exception) {
+        try {
+            // Fallback to SimpleDateFormat
+            val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            val formatter = SimpleDateFormat("MMM dd", Locale.getDefault())
+
+            val startDate = parser.parse(start.substringBefore("T"))
+            val endDate = parser.parse(end.substringBefore("T"))
+
+            "${formatter.format(startDate)} - ${formatter.format(endDate)}"
+        } catch (e2: Exception) {
+            "Invalid dates"
+        }
+    }
+}
+
+
 
 
 @Composable

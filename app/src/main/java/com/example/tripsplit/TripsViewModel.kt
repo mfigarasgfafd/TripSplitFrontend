@@ -1,6 +1,7 @@
 package com.example.tripsplit
 
 import android.util.Log
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
@@ -8,101 +9,91 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 
 class TripsViewModel : ViewModel() {
-    private val apiService = NetworkClient.apiService
+    private val _trips = mutableStateListOf<Trip>()
+    val trips: List<Trip> = _trips
 
-    val trips = mutableStateListOf<Trip>()
-    val isLoading = mutableStateOf(false)
-    val errorState = mutableStateOf<String?>(null)
+    private val _isLoading = mutableStateOf(false)
+    val isLoading: State<Boolean> = _isLoading
 
-    fun loadUserTrips(userId: Int, apiKey: String) {
-        if (isLoading.value) return
+    private val _errorState = mutableStateOf<String?>(null)
+    val errorState: State<String?> = _errorState
 
+    fun loadUserTrips(apiKey: String) {
         viewModelScope.launch {
-            isLoading.value = true
-            errorState.value = null
-
+            _isLoading.value = true
+            _errorState.value = null
             try {
-                trips.clear()
-
-                // Fetch groups from backend
-                val groupsResponse = apiService.getGroups(apiKey)
-                if (groupsResponse.isSuccessful) {
-                    val groups = groupsResponse.body() ?: emptyList()
-
-                    // Filter groups for this user
-                    val userGroups = groups.filter { group ->
-                        group.owner == userId || userId in group.members
-                    }
-
-                    // Convert groups to trips
-                    userGroups.forEach { group ->
-                        trips.add(convertGroupToTrip(group))
-                    }
-
-                    // If no groups, add mock trips
-                    if (trips.isEmpty()) {
-                        trips.addAll(getMockTrips())
-                    }
+                val response = NetworkClient.apiService.getUserGroups(apiKey)
+                if (response.isSuccessful) {
+                    val groups = response.body() ?: emptyList()
+                    _trips.clear()
+                    _trips.addAll(groups.map { it.toTrip() })
                 } else {
-                    errorState.value = "Failed to load groups: ${groupsResponse.message()}"
+                    val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                    _errorState.value = "Error ${response.code()}: $errorBody"
+                    Log.e("TripsViewModel", "API error: $errorBody")
                 }
             } catch (e: Exception) {
-                errorState.value = "Network error: ${e.message}"
-                Log.e("TripsViewModel", "Error loading trips", e)
+                _errorState.value = "Network error: ${e.message}"
+                Log.e("TripsViewModel", "Network error", e)
             } finally {
-                isLoading.value = false
+                _isLoading.value = false
             }
         }
     }
 
-    private fun convertGroupToTrip(group: Group): Trip {
-        // Generate placeholder data
-        val dateRange = when (group.id % 3) {
-            0 -> "Jul 15 - Aug 2"
-            1 -> "Dec 1 - Jan 15"
-            else -> "Feb 10 - Feb 12"
-        }
-
-        val nextActivity = when (group.id % 4) {
-            0 -> "Flight booking"
-            1 -> "Visa applications"
-            2 -> "Equipment rental"
-            else -> "Hotel reservation"
-        }
-
-        val progress = when (group.id % 5) {
-            0 -> 0.2f
-            1 -> 0.4f
-            2 -> 0.6f
-            3 -> 0.8f
-            else -> 1.0f
-        }
-
-        val imageResId = when (group.id % 3) {
-            0 -> R.drawable.europe
-            1 -> R.drawable.zhongnahai
-            else -> R.drawable.ski
-        }
-
+    // Helper function to convert Group to Trip
+    private fun Group.toTrip(): Trip {
         return Trip(
-            id = group.id.toString(),
-            name = group.name,
-            dateRange = dateRange,
-            nextActivity = nextActivity,
-            progress = progress,
-            imageResId = imageResId,
+            id = id?.toString() ?: "0",
+            name = name ?: "Unnamed Trip",
+            dateRange = formatDateRange(groupStartDate, groupEndDate),
+            nextActivity = "Manage expenses", // Default value
+            progress = 0.5f, // Default progress
+            imageResId = getRandomPlaceholderImage(),
             isFromBackend = true
         )
     }
 
-    private fun getMockTrips(): List<Trip> {
-        return listOf(
-            Trip("1", "Summer Europe Trip", "Jul 15 - Aug 2", "Flight booking", 0.4f, R.drawable.europe),
-            Trip("2", "Asia Backpacking", "Dec 1 - Jan 15", "Visa applications", 0.2f, R.drawable.zhongnahai),
-            Trip("3", "Weekend Ski Trip", "Feb 10 - Feb 12", "Equipment rental", 0.8f, R.drawable.ski)
+    private fun formatDateRange(start: String?, end: String?): String {
+        if (start == null || end == null) return "Dates not set"
+
+        return try {
+            // Parse with java.time API (recommended for API 26+)
+            val startDate = LocalDate.parse(start.substringBefore("T"))
+            val endDate = LocalDate.parse(end.substringBefore("T"))
+
+            val formatter = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
+            "${startDate.format(formatter)} - ${endDate.format(formatter)}"
+        } catch (e: Exception) {
+            try {
+                // Fallback to SimpleDateFormat
+                val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                val formatter = SimpleDateFormat("MMM dd", Locale.getDefault())
+
+                val startDate = parser.parse(start.substringBefore("T"))
+                val endDate = parser.parse(end.substringBefore("T"))
+
+                "${formatter.format(startDate)} - ${formatter.format(endDate)}"
+            } catch (e2: Exception) {
+                "Invalid dates"
+            }
+        }
+    }
+
+    private fun getRandomPlaceholderImage(): Int {
+        val placeholders = listOf(
+            R.drawable.europe,
+            R.drawable.zhongnahai,
+            R.drawable.ski
         )
+        return placeholders.random()
     }
 }

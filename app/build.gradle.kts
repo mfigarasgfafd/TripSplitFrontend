@@ -52,6 +52,8 @@ dependencies {
         implementation ("com.google.code.gson:gson:2.8.9")
         implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
         implementation ("com.squareup.okhttp3:logging-interceptor:4.10.0")
+        implementation ("com.google.code.gson:gson:2.8.9")
+
 
 
     implementation(libs.androidx.core.ktx)
