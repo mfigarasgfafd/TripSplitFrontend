@@ -22,8 +22,13 @@ data class User(
 )
 
 data class GroupRequest(
-    val name: String,
-    val owner: Int
+    val description: String,
+    @SerializedName("group_start_date")
+    val groupStartDate: String,
+    @SerializedName("group_end_date")
+    val groupEndDate: String,
+    val location: String,
+    val name: String
 )
 
 data class Group(

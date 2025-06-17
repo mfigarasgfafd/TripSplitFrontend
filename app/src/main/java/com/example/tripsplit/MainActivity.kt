@@ -377,12 +377,13 @@ class GroupViewModel : ViewModel() {
         }
     }
 
-    fun createGroup(name: String, ownerId: Int, apiKey: String) {
+    fun createGroup(apiKey: String,description: String, group_start_date: String,
+                    group_end_date:String,location: String, name: String) {
         viewModelScope.launch {
             createGroupState.value = CreateGroupState.Loading
             try {
                 val response = apiService.createGroup(
-                    GroupRequest(name, ownerId),
+                    GroupRequest(description,group_start_date,group_end_date,location, name),
                     apiKey
                 )
 
@@ -587,8 +588,8 @@ fun MyTripsScreen(
             CreateGroupDialog(
                 users = groupViewModel.users,
                 onDismiss = { showCreateGroupDialog = false },
-                onCreate = { name, ownerId ->
-                    groupViewModel.createGroup(name, ownerId, apiKey)
+                onCreate = { description,location,start_date,end_date,groupName ->
+                    groupViewModel.createGroup(apiKey, description, start_date,end_date, location, groupName)
                 },
                 isLoading = groupViewModel.createGroupState.value is GroupViewModel.CreateGroupState.Loading
             )
@@ -654,11 +655,14 @@ fun TripCard(trip: Trip, onTripClick: (String) -> Unit) {
 fun CreateGroupDialog(
     users: List<User>,
     onDismiss: () -> Unit,
-    onCreate: (String, Int) -> Unit,
+    onCreate: (String,String, String, String, String) -> Unit,
     isLoading: Boolean
 ) {
     var groupName by remember { mutableStateOf("") }
-    var selectedOwnerId by remember { mutableStateOf(-1) }
+    var description by remember { mutableStateOf("") }
+    var location by remember { mutableStateOf("") }
+    var start_date by remember { mutableStateOf("") }
+    var end_date by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -672,44 +676,47 @@ fun CreateGroupDialog(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isLoading
                 )
+                TextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+                TextField(
+                    value = location,
+                    onValueChange = { location = it },
+                    label = { Text("Location") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+                TextField(
+                    value = start_date,
+                    onValueChange = { start_date = it },
+                    label = { Text("Start date") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+                TextField(
+                    value = end_date,
+                    onValueChange = { end_date = it },
+                    label = { Text("End Date") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+
 
                 Spacer(modifier = Modifier.height(16.dp))
-
-                Text("Select Owner:", style = MaterialTheme.typography.body1)
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                LazyColumn(modifier = Modifier.height(200.dp)) {
-                    items(users) { user ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedOwnerId = user.id }
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedOwnerId == user.id,
-                                onClick = { selectedOwnerId = user.id }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(user.name, style = MaterialTheme.typography.body1)
-                                Text(user.email, style = MaterialTheme.typography.caption)
-                            }
-                        }
-                    }
-                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (groupName.isNotBlank() && selectedOwnerId != -1) {
-                        onCreate(groupName, selectedOwnerId)
+                    if (groupName.isNotBlank() ) {
+                        onCreate(description,location,start_date,end_date,groupName)
                     }
                 },
-                enabled = !isLoading && groupName.isNotBlank() && selectedOwnerId != -1,
+                enabled = !isLoading && groupName.isNotBlank() && description.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(backgroundColor = PrimaryColor)
             ) {
                 if (isLoading) {
