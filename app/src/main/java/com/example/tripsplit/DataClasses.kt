@@ -1,5 +1,6 @@
 package com.example.tripsplit
 
+import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 
 //data class UserRegistration(
@@ -31,12 +32,38 @@ data class Group(
     @SerializedName("name") val name: String? = null,
     @SerializedName("owner_id") val ownerId: Int? = null,
     @SerializedName("members_ids") val membersIds: List<Int>? = null,
-    @SerializedName("expenses") val expenses: List<Int>? = null,
+    @SerializedName("expenses") val expenses: List<Any>? = null, // Changed to List<Any>
     @SerializedName("group_start_date") val groupStartDate: String? = null,
     @SerializedName("group_end_date") val groupEndDate: String? = null,
     @SerializedName("description") val description: String? = null,
     @SerializedName("location") val location: String? = null
-)
+) {
+    // Helper function to get expense IDs
+    fun getExpenseIds(): List<Int> {
+        return expenses?.mapNotNull {
+            when (it) {
+                is Int -> it
+                is Map<*, *> -> (it["id"] as? Number)?.toInt()
+                else -> null
+            }
+        } ?: emptyList()
+    }
+
+    // Helper function to get expense objects
+    fun getExpenseObjects(): List<Expense> {
+        return expenses?.mapNotNull {
+            if (it is Map<*, *>) {
+                try {
+                    Gson().fromJson(Gson().toJson(it), Expense::class.java)
+                } catch (e: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+        } ?: emptyList()
+    }
+}
 
 
 data class CreateUserResponse(

@@ -437,6 +437,8 @@ class AuthViewModel : ViewModel() {
 
 class GroupViewModel : ViewModel() {
     private val apiService = NetworkClient.apiService
+    private val _allGroups = mutableStateListOf<Group>()
+    val allGroups: List<Group> = _allGroups
 
     val users = mutableStateListOf<User>()
     val createGroupState = mutableStateOf<CreateGroupState>(CreateGroupState.Idle)
@@ -456,6 +458,27 @@ class GroupViewModel : ViewModel() {
         data class Error(val message: String) : JoinGroupState()
     }
 
+
+    suspend fun loadAllGroups(apiKey: String) {
+        try {
+            val response = NetworkClient.apiService.getUserGroups(apiKey)
+            if (response.isSuccessful) {
+                _allGroups.clear()
+                response.body()?.let { groups ->
+                    _allGroups.addAll(groups)
+                }
+            } else {
+                Log.e("GroupViewModel", "Failed to load groups: ${response.errorBody()?.string()}")
+            }
+        } catch (e: Exception) {
+            Log.e("GroupViewModel", "Error loading groups", e)
+        }
+    }
+
+    fun getGroupById(groupId: Int): Group? {
+        return _allGroups.find { it.id == groupId }
+    }
+
     fun loadUsers(apiKey: String) {
         viewModelScope.launch {
             try {
@@ -473,9 +496,9 @@ class GroupViewModel : ViewModel() {
     }
     suspend fun getGroupDetails(apiKey: String, groupId: Int): Group? {
         return try {
-            val response = apiService.getUserGroups(apiKey)
+            val response = NetworkClient.apiService.getGroupDetails(apiKey, groupId)
             if (response.isSuccessful) {
-                response.body()?.find { it.id == groupId }
+                response.body()
             } else {
                 null
             }
@@ -1397,7 +1420,12 @@ fun ThisTripScreen(
         if (tripId != null) {
             isLoading.value = true
             try {
-                val group = groupViewModel.getGroupDetails(apiKey, tripId.toInt())
+                // First load all groups
+                groupViewModel.loadAllGroups(apiKey)
+
+                // Then find the specific group
+                val group = groupViewModel.getGroupById(tripId.toInt())
+
                 if (group != null) {
                     groupState.value = group
                     // Calculate expenses and transactions
@@ -1414,7 +1442,23 @@ fun ThisTripScreen(
             errorState.value = "Invalid trip ID"
         }
     }
-
+    if (groupState.value != null) {
+        GroupDetailsContent(
+            group = groupState.value!!,
+            expenses = groupViewModel.expenses, // Pass expenses from ViewModel
+            transactions = groupViewModel.transactions,
+            totalSpent = groupViewModel.totalSpent.value,
+            onAddExpense = { expense ->
+                if (tripId != null) {
+                    groupViewModel.addExpense(
+                        apiKey,
+                        tripId.toInt(),
+                        expense
+                    )
+                }
+            }
+        )
+    }
     // Handle expense state changes
     LaunchedEffect(groupViewModel.addExpenseState.value) {
         when (val state = groupViewModel.addExpenseState.value) {
@@ -1514,7 +1558,7 @@ fun ThisTripScreen(
 @Composable
 fun GroupDetailsContent(
     group: Group,
-    expenses: List<Expense>,
+    expenses: List<Expense>, // Passed from ViewModel
     transactions: List<Transaction>,
     totalSpent: Double,
     onAddExpense: (Expense) -> Unit
@@ -1526,137 +1570,142 @@ fun GroupDetailsContent(
     var selectedParticipants by remember { mutableStateOf<List<Int>>(emptyList()) }
     val context = LocalContext.current
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
-            .verticalScroll(rememberScrollState())
     ) {
         // Group Header
-        Text(
-            text = group.name ?: "Unnamed Trip",
-            style = MaterialTheme.typography.h4,
-            color = PrimaryColor,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
+        item {
+            Column {
+                Text(
+                    text = group.name ?: "Unnamed Trip",
+                    style = MaterialTheme.typography.h4,
+                    color = PrimaryColor,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
 
-        // Location
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Default.LocationOn,
-                contentDescription = "Location",
-                tint = PrimaryColor
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = group.location ?: "No location specified",
-                style = MaterialTheme.typography.body1
-            )
+                // Location
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = "Location",
+                        tint = PrimaryColor
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = group.location ?: "No location specified",
+                        style = MaterialTheme.typography.body1
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Date Range
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.DateRange,
+                        contentDescription = "Dates",
+                        tint = PrimaryColor
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = formatDateRange(group.groupStartDate, group.groupEndDate),
+                        style = MaterialTheme.typography.body1
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Description
+                Text(
+                    text = "Description",
+                    style = MaterialTheme.typography.h6,
+                    color = PrimaryColor
+                )
+                Text(
+                    text = group.description ?: "No description available",
+                    style = MaterialTheme.typography.body1,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Members section
+                Text(
+                    text = "Members",
+                    style = MaterialTheme.typography.h6,
+                    color = PrimaryColor
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                group.membersIds?.forEach { memberId ->
+                    Text(
+                        text = "User ID: $memberId",
+                        style = MaterialTheme.typography.body1,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+            }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Date Range
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Default.DateRange,
-                contentDescription = "Dates",
-                tint = PrimaryColor
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = formatDateRange(group.groupStartDate, group.groupEndDate),
-                style = MaterialTheme.typography.body1
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Description
-        Text(
-            text = "Description",
-            style = MaterialTheme.typography.h6,
-            color = PrimaryColor
-        )
-        Text(
-            text = group.description ?: "No description available",
-            style = MaterialTheme.typography.body1,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Members section
-        Text(
-            text = "Members",
-            style = MaterialTheme.typography.h6,
-            color = PrimaryColor
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Members list - simplified for now
-        group.membersIds?.forEach { memberId ->
-            Text(
-                text = "User ID: $memberId",
-                style = MaterialTheme.typography.body1,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
 
         // Expenses Section
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Expenses (Total: ${"%.2f".format(totalSpent)} PLN)",
+                    style = MaterialTheme.typography.h6,
+                    color = PrimaryColor
+                )
+                Button(
+                    onClick = { showExpenseDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = PrimaryColor,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("Record Expense")
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // Expense List
+        if (expenses.isEmpty()) {
+            item {
+                Text("No expenses recorded yet", modifier = Modifier.padding(8.dp))
+            }
+        } else {
+            items(expenses) { expense ->
+                ExpenseItem(expense = expense)
+            }
+        }
+
+        // Transactions Header
+        item {
+            Spacer(modifier = Modifier.height(24.dp))
             Text(
-                text = "Expenses (Total: ${"%.2f".format(totalSpent)} PLN)",
+                text = "Settlement Transactions",
                 style = MaterialTheme.typography.h6,
                 color = PrimaryColor
             )
-            Button(
-                onClick = { showExpenseDialog = true },
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = PrimaryColor,
-                    contentColor = Color.White
-                )
-            ) {
-                Text("Record Expense")
-            }
+            Spacer(modifier = Modifier.height(8.dp))
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (expenses.isEmpty()) {
-            Text("No expenses recorded yet", modifier = Modifier.padding(8.dp))
-        } else {
-            LazyColumn {
-                items(expenses) { expense ->
-                    ExpenseItem(expense = expense)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Transactions Section
-        Text(
-            text = "Settlement Transactions",
-            style = MaterialTheme.typography.h6,
-            color = PrimaryColor
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
+        // Transactions List
         if (transactions.isEmpty()) {
-            Text("No transactions needed", modifier = Modifier.padding(8.dp))
+            item {
+                Text("No transactions needed", modifier = Modifier.padding(8.dp))
+            }
         } else {
-            LazyColumn {
-                items(transactions) { transaction ->
-                    TransactionItem(transaction = transaction)
-                }
+            items(transactions) { transaction ->
+                TransactionItem(transaction = transaction)
             }
         }
     }

@@ -55,8 +55,8 @@ class TripsViewModel : ViewModel() {
             id = id?.toString() ?: "0",
             name = name ?: "Unnamed Trip",
             dateRange = formatDateRange(groupStartDate, groupEndDate),
-            nextActivity = "Manage expenses", // Default value
-            progress = 0.5f, // Default progress
+            nextActivity = "Manage expenses",
+            progress = 0.5f,
             imageResId = getRandomPlaceholderImage(),
             isFromBackend = true
         )
