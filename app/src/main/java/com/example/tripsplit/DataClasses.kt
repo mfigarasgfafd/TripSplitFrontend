@@ -3,16 +3,7 @@ package com.example.tripsplit
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 
-//data class UserRegistration(
-//    @SerializedName("name") // Match JSON key
-//    val name: String,
-//
-//    @SerializedName("email") // Match JSON key
-//    val email: String,
-//
-//    @SerializedName("password") // Match JSON key
-//    val password: String
-//)
+
 
 // Data classes
 data class User(
@@ -37,39 +28,10 @@ data class Group(
     @SerializedName("group_end_date") val groupEndDate: String? = null,
     @SerializedName("description") val description: String? = null,
     @SerializedName("location") val location: String? = null
-) {
-    // Helper function to get expense IDs
-    fun getExpenseIds(): List<Int> {
-        return expenses?.mapNotNull {
-            when (it) {
-                is Int -> it
-                is Map<*, *> -> (it["id"] as? Number)?.toInt()
-                else -> null
-            }
-        } ?: emptyList()
-    }
-
-    // Helper function to get expense objects
-    fun getExpenseObjects(): List<Expense> {
-        return expenses?.mapNotNull {
-            if (it is Map<*, *>) {
-                try {
-                    Gson().fromJson(Gson().toJson(it), Expense::class.java)
-                } catch (e: Exception) {
-                    null
-                }
-            } else {
-                null
-            }
-        } ?: emptyList()
-    }
-}
-
-
-data class CreateUserResponse(
-    val id: Int,
-    val success: Boolean
 )
+
+
+
 //data class LoginRequest(
 //    val email: String,
 //    val name: String,  // Note: This might be optional depending on your backend
@@ -93,10 +55,7 @@ data class JoinGroupRequest(
     @SerializedName("group_id") val groupId: Int
 )
 
-// Auth response
-data class AuthResponse(
-    val token: String
-)
+
 
 data class AuthRequest(
     val email: String,
@@ -104,12 +63,6 @@ data class AuthRequest(
     val password: String
 )
 
-// User registration request
-data class UserRegistration(
-    val name: String,
-    val email: String,
-    val password: String
-)
 
 // Login request
 data class LoginRequest(

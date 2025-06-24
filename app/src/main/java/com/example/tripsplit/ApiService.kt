@@ -27,22 +27,12 @@ interface ApiService {
     ): Response<ResponseBody>
 
 
-    @GET("group/get_groups")
-    suspend fun getGroups(
-        @Header("todo_apikey") apiKey: String
-    ): Response<List<Group>>
-
     // User endpoints
     @GET("user/get_users")
     suspend fun getUsers(
         @Header("todo_apikey") apiKey: String
     ): Response<List<User>>
 
-    @GET("group/get_group/{id}")
-    suspend fun getGroupDetails(
-        @Header("todo_apikey") apiKey: String,
-        @Path("id") id: Int
-    ): Response<Group>
 
     @POST("group/get_user_groups")
     suspend fun getUserGroups(
@@ -56,19 +46,6 @@ interface ApiService {
         @Body request: JoinGroupRequest
     ): Response<ResponseBody>
 
-//    // New endpoints for groups
-//    @GET("user/get_users")
-//    suspend fun getUsers(): Response<List<User>>
-//
-//    @POST("group/create_group")
-//    suspend fun createGroup(@Body group: GroupRequest): Response<Void>
-//
-//    // Add group endpoints
-//    @GET("group/get_groups")
-//    suspend fun getAllGroups(): Response<List<Group>>
-//
-//    @GET("group/get_group/{id}")
-//    suspend fun getGroup(@Path("id") id: Int): Response<Group>
 @POST("group/add_expense")
 @Headers("Accept: text/plain")
 suspend fun addExpense(

@@ -119,70 +119,6 @@ data class NavItem(
 
 
 
-data class ApiResponse(
-    @SerializedName("success") val success: Boolean,
-    @SerializedName("message") val message: String
-)
-
-object RetrofitClient {
-    private const val BASE_URL = "https://trip-split.visoft.dev/"
-
-    val instance: ApiService by lazy {
-        val interceptor = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        }
-
-        val client = OkHttpClient.Builder()
-            .addInterceptor(interceptor)
-            .build()
-
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(ApiService::class.java)
-    }
-
-    private fun getUnsafeOkHttpClient(): OkHttpClient {
-
-        try {
-            // Create a trust manager that does not validate certificate chains
-            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
-                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-            })
-
-            // Install the all-trusting trust manager
-            val sslContext = SSLContext.getInstance("SSL")
-            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
-
-            // Create an ssl socket factory with our all-trusting manager
-            val sslSocketFactory = sslContext.socketFactory
-
-            return OkHttpClient.Builder()
-                .sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
-                .hostnameVerifier { _, _ -> true }
-                .addInterceptor(HttpLoggingInterceptor().apply {
-                    level = HttpLoggingInterceptor.Level.BODY
-                })
-                .build()
-        } catch (e: Exception) {
-            throw RuntimeException(e)
-        }
-    }
-
-    val unsafeInstance: ApiService by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .client(getUnsafeOkHttpClient())
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(ApiService::class.java)
-    }
-
-}
 
 data class Trip(
     val id: String,
@@ -247,12 +183,7 @@ object AuthStateManager {
         return getToken(context) != null
     }
 }
-// next activity jako takie pojedyńcze to do?
-val tripList = listOf(
-    Trip("1", "Summer Europe Trip", "Jul 15 - Aug 2", "Flight booking", 0.4f, R.drawable.europe),
-    Trip("2", "Asia Backpacking", "Dec 1 - Jan 15", "Visa applications", 0.2f, R.drawable.zhongnahai),
-    Trip("3", "Weekend Ski Trip", "Feb 10 - Feb 12", "Equipment rental", 0.8f, R.drawable.ski)
-)
+
 
 
 fun String.toLocalDate(): LocalDate {
@@ -371,7 +302,7 @@ class AuthViewModel : ViewModel() {
     private val _authState = mutableStateOf<AuthState>(AuthState.Idle)
     val authState: State<AuthState> = _authState
 
-    // Add function to fetch user ID (you'll need to implement this endpoint)
+    // Add function to fetch user ID (later)
     private suspend fun fetchUserId(token: String, email: String): Int {
         // This is a placeholder - implement your actual user ID endpoint
         return 1 // For demo purposes
@@ -494,18 +425,7 @@ class GroupViewModel : ViewModel() {
             }
         }
     }
-    suspend fun getGroupDetails(apiKey: String, groupId: Int): Group? {
-        return try {
-            val response = NetworkClient.apiService.getGroupDetails(apiKey, groupId)
-            if (response.isSuccessful) {
-                response.body()
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
+
     private val _expenses = mutableStateListOf<Expense>()
     val expenses: List<Expense> = _expenses
 
@@ -1186,22 +1106,7 @@ fun JoinCodeDialog(
 }
 
 
-@Composable
-fun TripItem(tripName: String, onTripClick: (String) -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .clickable { onTripClick(tripName) } // Trigger trip selection onclick
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(text = tripName, style = MaterialTheme.typography.h6)
-            Text(text = "Updated today", style = MaterialTheme.typography.body2)
-        }
-    }
-}
+
 @Composable
 fun TripsApp() {
     val navController = rememberNavController()
@@ -1873,21 +1778,6 @@ private fun formatDateRange(start: String?, end: String?): String {
 
 
 
-@Composable
-fun PersonItem(name: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(8.dp)
-    ) {
-        Icon(Icons.Filled.Person, contentDescription = name)
-        Spacer(modifier = Modifier.width(8.dp))
-        Column {
-            Text(text = name, style = MaterialTheme.typography.h6)
-            Text(text = "Supporting line text lorem ipsum...", style = MaterialTheme.typography.body2)
-        }
-    }
-}
 
 
 
@@ -2107,45 +1997,6 @@ fun LoginScreen(
     }
 }
 
-//private fun registerUser(
-//    name: String,
-//    email: String,
-//    password: String,
-//    context: Context,
-//    onSuccess: (String) -> Unit,
-//    onLoading: (Boolean) -> Unit
-//) {
-//
-//    if (name.isBlank() || email.isBlank() || password.isBlank()) {
-//        Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
-//        return
-//    }
-//
-//    CoroutineScope(Dispatchers.IO).launch {
-//        onLoading(true)
-//        try {
-//            val response = RetrofitClient.instance.registerUser(
-//                UserRegistration(name, email, password)
-//            )
-//
-//            withContext(Dispatchers.Main) {
-//                if (response.isSuccessful && response.body()?.success == true) {
-//                    onSuccess(email)
-//                    Toast.makeText(context, "Registration successful!", Toast.LENGTH_SHORT).show()
-//                } else {
-//                    val error = response.errorBody()?.string() ?: "Unknown error"
-//                    Toast.makeText(context, "Registration failed: $error", Toast.LENGTH_LONG).show()
-//                }
-//            }
-//        } catch (e: Exception) {
-//            withContext(Dispatchers.Main) {
-//                Toast.makeText(context, "Network error: ${e.message}", Toast.LENGTH_LONG).show()
-//            }
-//        } finally {
-//            onLoading(false)
-//        }
-//    }
-//}
 
 @Composable
 fun ProfileScreen(
@@ -2253,17 +2104,17 @@ fun ProfileOptionItem(icon: Int, text: String) {
     }
 }
 
-@Composable
-fun ProfileOption(optionText: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
-        Text(text = optionText, fontSize = 18.sp, color = Color.Black)
-        Divider(color = Color.LightGray, thickness = 1.dp)
-    }
-}
+//@Composable
+//fun ProfileOption(optionText: String) {
+//    Column(
+//        modifier = Modifier
+//            .fillMaxWidth()
+//            .padding(vertical = 8.dp)
+//    ) {
+//        Text(text = optionText, fontSize = 18.sp, color = Color.Black)
+//        Divider(color = Color.LightGray, thickness = 1.dp)
+//    }
+//}
 
 @Preview(showBackground = true)
 @Composable
